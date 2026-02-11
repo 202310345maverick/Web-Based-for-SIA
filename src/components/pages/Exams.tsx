@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useSearchParams } from 'next/navigation'; 
 import Link from 'next/link';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -47,49 +46,15 @@ interface ExamFormData {
 }
 
 export default function Exams() {
-  const searchParams = useSearchParams(); 
   const [exams, setExams] = useState<Exam[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
 
-  useEffect(() => {
-    const title = searchParams.get('title');
-    const subject = searchParams.get('subject');
-    const items = searchParams.get('items');
-    const date = searchParams.get('date');
-    const choices = searchParams.get('choices');
-
-    if (title && subject && items && date) {
-      const examExists = exams.some(exam => 
-        exam.title === title && 
-        exam.subject === subject && 
-        exam.num_items === parseInt(items)
-      );
-
-      if (!examExists) {
-        const newExam: Exam = {
-          id: `exam_${Date.now()}`,
-          title: title,
-          subject: subject,
-          num_items: parseInt(items),
-          choices_per_item: choices ? parseInt(choices) : 4,
-          created_at: new Date(date).toISOString(),
-          answer_keys: [],
-          generated_sheets: []
-        };
-
-        setExams(prev => [newExam, ...prev]);
-        toast.success(`Exam "${title}" added successfully`);
-
-        window.history.replaceState(null, '', '/exams');
-      }
-    }
-  }, [searchParams, exams]); 
-
   const fetchExams = async () => {
     try {
+      // Initialize with empty exams
       setExams([]);
     } catch (error) {
       console.error('Error fetching exams:', error);
@@ -212,13 +177,9 @@ export default function Exams() {
                     {search ? 'No exams found matching your search' : 'No exams created yet'}
                   </p>
                   {!search && (
-                    <Button 
-                      variant="link" 
-                      className="mt-2"
-                      onClick={() => setShowCreateModal(true)}
-                    >
-                      Create your first exam
-                    </Button>
+                    <Link href="/exams/new">
+                      <Button variant="link" className="mt-2">Create your first exam</Button>
+                    </Link>
                   )}
                 </TableCell>
               </TableRow>
@@ -292,3 +253,4 @@ export default function Exams() {
     </div>
   );
 }
+
