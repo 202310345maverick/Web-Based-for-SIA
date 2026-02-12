@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -14,12 +14,19 @@ interface LoginFormProps {
 
 export function LoginForm({ onToggleMode }: LoginFormProps) {
   const router = useRouter();
-  const { signIn } = useAuth();
+  const { signIn, user } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
+
+  // Redirect to dashboard when user is authenticated
+  useEffect(() => {
+    if (user && !loading) {
+      router.push('/dashboard');
+    }
+  }, [user, loading, router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,12 +36,29 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
     const { error } = await signIn(email, password);
     
     if (error) {
-      setError(error.message);
+      // Convert Firebase errors to user-friendly messages
+      let errorMessage = error.message;
+      
+      if (error.message.includes('auth/user-not-found')) {
+        errorMessage = 'No account found with this email address.';
+      } else if (error.message.includes('auth/wrong-password')) {
+        errorMessage = 'Incorrect password. Please try again.';
+      } else if (error.message.includes('auth/invalid-email')) {
+        errorMessage = 'Invalid email address.';
+      } else if (error.message.includes('auth/user-disabled')) {
+        errorMessage = 'This account has been disabled.';
+      } else if (error.message.includes('auth/too-many-requests')) {
+        errorMessage = 'Too many failed attempts. Please try again later.';
+      } else if (error.message.includes('auth/network-request-failed')) {
+        errorMessage = 'Network error. Please check your connection.';
+      } else if (error.message.includes('auth/invalid-credential')) {
+        errorMessage = 'Invalid email or password.';
+      }
+      
+      setError(errorMessage);
       setLoading(false);
-    } else {
-      // Redirect to dashboard on successful login
-      router.push('/dashboard');
     }
+    // Don't redirect here - let useEffect handle it when user state updates
   };
 
   return (

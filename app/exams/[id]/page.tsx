@@ -1,15 +1,15 @@
-import { Metadata } from "next";
+'use client';
+
 import ExamDetails from "@/components/pages/ExamDetails";
 import { ProtectedLayout } from "@/components/layout/ProtectedLayout";
+import { use } from "react";
 
-export const metadata: Metadata = {
-  title: "Exam Details - SIA",
-};
-
-export default function ExamDetailPage({ params }: { params: { id: string } }) {
+export default function ExamDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params);
+  
   return (
     <ProtectedLayout>
-      <ExamDetails params={params} />
+      <ExamDetails params={{ id }} />
     </ProtectedLayout>
   );
 }

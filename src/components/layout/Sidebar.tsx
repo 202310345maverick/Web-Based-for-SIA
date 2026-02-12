@@ -22,7 +22,7 @@ import { Button } from '@/components/ui/button';
 const navItems = [
   { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/exams', label: 'Exams', icon: FileText },
-  { path: '/students', label: 'Students', icon: Users },
+  { path: '/classes', label: 'Classes', icon: Users },
   { path: '/results', label: 'Results', icon: BarChart3 },
   { path: '/reports', label: 'Reports', icon: Scroll },
   { path: '/templates', label: 'Templates', icon: FileText },

@@ -20,17 +20,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { generateAnswerSheetPDF } from '@/lib/pdfGenerator';
-
-interface Exam {
-  id: string;
-  title: string;
-  subject: string;
-  num_items: number;
-  choices_per_item: number;
-  student_id_length: number;
-  description: string | null;
-  created_at: string;
-}
+import { getExamById, type Exam } from '@/services/examService';
 
 interface AnswerKey {
   id: string;
@@ -40,7 +30,7 @@ interface AnswerKey {
 
 export default function ExamDetail() {
   const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
+  const router = useRouter();
   const { user } = useAuth();
   
   const [exam, setExam] = useState<Exam | null>(null);
@@ -54,26 +44,35 @@ export default function ExamDetail() {
   // Answer key input state
   const [answers, setAnswers] = useState<Record<number, string>>({});
 
-  useEffect(() => {
-    if (!id) return;
-    fetchExamData();
-  }, [id, fetchExamData]);
-
   const fetchExamData = async () => {
+    if (!id) return;
+    
     try {
-      // Initialize with empty exam
-      setExam(null);
+      // Fetch exam from Firestore
+      const examData = await getExamById(id);
+      
+      if (!examData) {
+        toast.error('Exam not found');
+        router.push('/exams');
+        return;
+      }
+      
+      setExam(examData);
       setAnswerKeys([]);
       setAnswers({});
       setTotalGenerated(0);
     } catch (error) {
       console.error('Error fetching exam:', error);
       toast.error('Failed to load exam');
-      navigate('/exams');
+      router.push('/exams');
     } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    fetchExamData();
+  }, [id]);
 
   const handleAnswerChange = (itemNumber: number, value: string) => {
     const upperValue = value.toUpperCase();
@@ -141,7 +140,7 @@ export default function ExamDetail() {
       <div className="mb-6">
         <Button 
           variant="ghost" 
-          onClick={() => navigate('/exams')}
+          onClick={() => router.push('/exams')}
           className="mb-4 -ml-2"
         >
           <ArrowLeft className="w-4 h-4 mr-2" />
