@@ -1,15 +1,15 @@
-import { Metadata } from "next";
+'use client';
+
 import TagReportsPage from "@/components/pages/TagReports";
 import { ProtectedLayout } from "@/components/layout/ProtectedLayout";
+import { use } from "react";
 
-export const metadata: Metadata = {
-  title: "Tag Reports - SIA",
-};
-
-export default function Page({ params }: { params: { id: string } }) {
+export default function Page({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params);
+  
   return (
     <ProtectedLayout>
-      <TagReportsPage params={params} />
+      <TagReportsPage params={{ id }} />
     </ProtectedLayout>
   );
 }

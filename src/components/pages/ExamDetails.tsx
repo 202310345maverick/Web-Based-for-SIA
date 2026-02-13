@@ -1,25 +1,101 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Card } from '@/components/ui/card';
 import { ArrowLeft, Edit2, Smartphone, FileText, BarChart3, Tag } from 'lucide-react';
+import { getExamById, Exam } from '@/services/examService';
+import { AnswerKeyService } from '@/services/answerKeyService';
 
 interface ExamDetailsProps {
   params: { id: string };
 }
 
+interface AnswerKeyStatus {
+  total: number;
+  completed: number;
+  hasAnswerKey: boolean;
+}
+
 export default function ExamDetails({ params }: ExamDetailsProps) {
-  const exam = {
-    id: params.id,
-    name: 'Exam',
-    totalQuestions: 0,
-    date: new Date().toISOString().split('T')[0],
-    folder: 'General',
-    createdAt: new Date().toISOString().split('T')[0],
-    status: 'In Progress',
-    answersEntered: 0,
-    papersScanners: 0
-  };
+  const [exam, setExam] = useState<Exam | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [answerKeyStatus, setAnswerKeyStatus] = useState<AnswerKeyStatus>({
+    total: 0,
+    completed: 0,
+    hasAnswerKey: false
+  });
+
+  useEffect(() => {
+    async function fetchExam() {
+      try {
+        setLoading(true);
+        const examData = await getExamById(params.id);
+        setExam(examData);
+        
+        // Fetch answer key status
+        if (examData) {
+          try {
+            const result = await AnswerKeyService.getAnswerKeyByExamId(params.id);
+            if (result.success && result.data) {
+              const answersCount = result.data.answers.length;
+              setAnswerKeyStatus({
+                total: examData.num_items,
+                completed: answersCount,
+                hasAnswerKey: true
+              });
+            } else {
+              setAnswerKeyStatus({
+                total: examData.num_items,
+                completed: 0,
+                hasAnswerKey: false
+              });
+            }
+          } catch (error) {
+            console.error('Error fetching answer key:', error);
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching exam:', error);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    if (params.id) {
+      fetchExam();
+    }
+  }, [params.id]);
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-4">
+          <Link href="/exams" className="p-2 hover:bg-muted rounded-md transition-colors">
+            <ArrowLeft className="w-5 h-5" />
+          </Link>
+          <div>
+            <h1 className="text-3xl font-bold text-foreground">Loading...</h1>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!exam) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-4">
+          <Link href="/exams" className="p-2 hover:bg-muted rounded-md transition-colors">
+            <ArrowLeft className="w-5 h-5" />
+          </Link>
+          <div>
+            <h1 className="text-3xl font-bold text-foreground">Exam not found</h1>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const actionButtons = [
     {
@@ -71,7 +147,7 @@ export default function ExamDetails({ params }: ExamDetailsProps) {
             <ArrowLeft className="w-5 h-5" />
           </Link>
           <div>
-            <h1 className="text-3xl font-bold text-foreground">{exam.name}</h1>
+            <h1 className="text-3xl font-bold text-foreground">{exam.title}</h1>
             <p className="text-sm text-muted-foreground">ID: {exam.id}</p>
           </div>
         </div>
@@ -81,19 +157,24 @@ export default function ExamDetails({ params }: ExamDetailsProps) {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card className="p-4 border">
           <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Total Questions</p>
-          <p className="text-2xl font-bold text-primary">{exam.totalQuestions}</p>
+          <p className="text-2xl font-bold text-primary">{exam.num_items}</p>
         </Card>
         <Card className="p-4 border">
           <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Exam Date</p>
-          <p className="text-2xl font-bold text-foreground">{new Date(exam.date).toLocaleDateString()}</p>
+          <p className="text-2xl font-bold text-foreground">{new Date(exam.created_at).toLocaleDateString()}</p>
         </Card>
         <Card className="p-4 border">
           <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Status</p>
-          <p className="text-2xl font-bold text-primary">{exam.status}</p>
+          <p className="text-2xl font-bold text-primary">
+            {answerKeyStatus.hasAnswerKey 
+              ? (answerKeyStatus.completed === answerKeyStatus.total ? 'Complete' : 'In Progress')
+              : 'Not started'
+            }
+          </p>
         </Card>
         <Card className="p-4 border">
           <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Folder</p>
-          <p className="text-2xl font-bold text-foreground">{exam.folder}</p>
+          <p className="text-2xl font-bold text-foreground">{exam.subject}</p>
         </Card>
       </div>
 
@@ -103,17 +184,25 @@ export default function ExamDetails({ params }: ExamDetailsProps) {
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
           <div>
             <p className="text-muted-foreground font-semibold mb-1">Created Date</p>
-            <p className="text-foreground">{new Date(exam.createdAt).toLocaleDateString()}</p>
+            <p className="text-foreground">{new Date(exam.created_at).toLocaleDateString()}</p>
           </div>
           <div>
             <p className="text-muted-foreground font-semibold mb-1">Answer Key Status</p>
-            <p className={`font-semibold ${exam.answersEntered > 0 ? 'text-primary' : 'text-muted-foreground'}`}>
-              {exam.answersEntered > 0 ? `${exam.answersEntered} answers` : 'Not started'}
-            </p>
+            {answerKeyStatus.hasAnswerKey ? (
+              <p className={`font-semibold ${
+                answerKeyStatus.completed === answerKeyStatus.total 
+                  ? 'text-success' 
+                  : 'text-warning'
+              }`}>
+                {answerKeyStatus.completed}/{answerKeyStatus.total} answers
+              </p>
+            ) : (
+              <p className="font-semibold text-muted-foreground">Not started</p>
+            )}
           </div>
           <div>
             <p className="text-muted-foreground font-semibold mb-1">Papers Scanned</p>
-            <p className="text-foreground">{exam.papersScanners} papers</p>
+            <p className="text-foreground">{exam.generated_sheets.length} papers</p>
           </div>
         </div>
       </Card>

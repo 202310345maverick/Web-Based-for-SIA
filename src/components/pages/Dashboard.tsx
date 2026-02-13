@@ -16,6 +16,11 @@ import {
 } from 'lucide-react';
 import { CreateExamModal } from '@/components/modals/CreateExamModal';
 import { toast } from 'sonner';
+import { 
+  createExam, 
+  getExams,
+  type ExamFormData 
+} from '@/services/examService';
 
 interface DashboardStats {
   totalExams: number;
@@ -30,16 +35,8 @@ interface DashboardStats {
   }>;
 }
 
-interface ExamFormData {
-  name: string;
-  totalQuestions: number;
-  date: string;
-  subject: string;
-  folder: string;
-}
-
 export default function Dashboard() {
-  const { userRole } = useAuth();
+  const { userRole, user } = useAuth();
   const router = useRouter();
   const [stats, setStats] = useState<DashboardStats>({
     totalExams: 0,
@@ -53,50 +50,70 @@ export default function Dashboard() {
   useEffect(() => {
     async function fetchStats() {
       try {
+        if (!user?.id) {
+          setLoading(false);
+          return;
+        }
+
+        // Fetch real exams from Firestore
+        const exams = await getExams(user.id);
+        
         setStats({
-          totalExams: 0,
-          totalStudents: 0,
-          totalSheets: 0,
-          recentExams: [],
+          totalExams: exams.length,
+          totalStudents: 0, // TODO: Implement student count
+          totalSheets: exams.reduce((sum, exam) => 
+            sum + (exam.generated_sheets?.reduce((s, sheet) => s + (sheet.sheet_count || 0), 0) || 0), 0
+          ),
+          recentExams: exams.slice(0, 5).map(exam => ({
+            id: exam.id,
+            title: exam.title,
+            subject: exam.subject,
+            num_items: exam.num_items,
+            created_at: exam.created_at,
+          })),
         });
       } catch (error) {
         console.error('Error fetching stats:', error);
+        toast.error('Failed to load dashboard data');
       } finally {
         setLoading(false);
       }
     }
 
     fetchStats();
-  }, []);
+  }, [user]);
 
 const handleCreateExam = async (formData: ExamFormData) => {
   try {
-    const newExam = {
-      id: `exam_${Date.now()}`,
-      title: formData.name,
-      subject: formData.folder,
-      num_items: formData.totalQuestions,
-      created_at: new Date(formData.date).toISOString(),
-    };
+    if (!user?.id) {
+      toast.error('You must be logged in to create an exam');
+      return;
+    }
 
+    // Save to Firestore
+    const newExam = await createExam(formData, user.id);
+
+    // Update stats
     setStats(prev => ({
       ...prev,
       totalExams: prev.totalExams + 1,
-      recentExams: [newExam, ...prev.recentExams.slice(0, 4)],
+      recentExams: [
+        {
+          id: newExam.id,
+          title: newExam.title,
+          subject: newExam.subject,
+          num_items: newExam.num_items,
+          created_at: newExam.created_at,
+        },
+        ...prev.recentExams.slice(0, 4)
+      ],
     }));
 
     toast.success(`Exam "${formData.name}" created successfully`);
     setShowCreateModal(false);
     
-    const params = new URLSearchParams({
-      title: formData.name,
-      subject: formData.folder,
-      items: formData.totalQuestions.toString(),
-      date: formData.date,
-      choices: '4', 
-    });
-    
-    router.push(`/exams?${params.toString()}`);
+    // Navigate to the exam detail page
+    router.push(`/exams/${newExam.id}`);
     
   } catch (error) {
     console.error('Error creating exam:', error);

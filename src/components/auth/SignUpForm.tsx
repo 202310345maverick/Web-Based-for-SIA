@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -14,13 +14,24 @@ interface SignUpFormProps {
 
 export function SignUpForm({ onToggleMode }: SignUpFormProps) {
   const router = useRouter();
-  const { signUp } = useAuth();
+  const { signUp, user } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+
+  // Redirect to dashboard when user is authenticated after signup
+  useEffect(() => {
+    if (user && success) {
+      // Small delay to show success message
+      const timer = setTimeout(() => {
+        router.push('/dashboard');
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [user, success, router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -36,10 +47,24 @@ export function SignUpForm({ onToggleMode }: SignUpFormProps) {
     const { error } = await signUp(email, password, fullName);
     
     if (error) {
-      setError(error.message);
+      // Convert Firebase errors to user-friendly messages
+      let errorMessage = error.message;
+      
+      if (error.message.includes('auth/email-already-in-use')) {
+        errorMessage = 'An account with this email already exists.';
+      } else if (error.message.includes('auth/invalid-email')) {
+        errorMessage = 'Invalid email address.';
+      } else if (error.message.includes('auth/weak-password')) {
+        errorMessage = 'Password is too weak. Use at least 6 characters.';
+      } else if (error.message.includes('auth/network-request-failed')) {
+        errorMessage = 'Network error. Please check your connection.';
+      }
+      
+      setError(errorMessage);
       setLoading(false);
     } else {
       setSuccess(true);
+      setLoading(false);
     }
   };
 
@@ -55,9 +80,10 @@ export function SignUpForm({ onToggleMode }: SignUpFormProps) {
             <p className="text-muted-foreground mb-6">
               Welcome to SIA, <strong>{fullName}</strong>!
             </p>
-            <Button onClick={() => router.push('/dashboard')} className="w-full h-11">
-              Go to Dashboard
-            </Button>
+            <p className="text-sm text-muted-foreground flex items-center justify-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Redirecting to dashboard...
+            </p>
           </div>
         </div>
       </div>

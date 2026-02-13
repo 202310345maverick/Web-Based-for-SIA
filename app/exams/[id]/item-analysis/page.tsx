@@ -1,15 +1,15 @@
-import { Metadata } from "next";
+'use client';
+
 import ItemAnalysisPage from "@/components/pages/ItemAnalysis";
 import { ProtectedLayout } from "@/components/layout/ProtectedLayout";
+import { use } from "react";
 
-export const metadata: Metadata = {
-  title: "Item Analysis - SIA",
-};
-
-export default function Page({ params }: { params: { id: string } }) {
+export default function Page({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params);
+  
   return (
     <ProtectedLayout>
-      <ItemAnalysisPage params={params} />
+      <ItemAnalysisPage params={{ id }} />
     </ProtectedLayout>
   );
 }

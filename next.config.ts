@@ -5,6 +5,22 @@ const nextConfig: NextConfig = {
   experimental: {
     esmExternals: true,
   },
+  // Suppress Watchpack errors for Windows system files
+  webpack: (config, { isServer }) => {
+    if (!isServer) {
+      config.watchOptions = {
+        ...config.watchOptions,
+        ignored: [
+          '**/node_modules',
+          '**/.git',
+          '**/C:/pagefile.sys',
+          '**/C:/hiberfil.sys',
+          '**/C:/swapfile.sys',
+        ],
+      };
+    }
+    return config;
+  },
 };
 
 export default nextConfig;

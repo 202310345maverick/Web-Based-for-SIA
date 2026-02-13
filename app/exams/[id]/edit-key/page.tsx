@@ -1,15 +1,15 @@
-import { Metadata } from "next";
+'use client';
+
 import AnswerKeyEditor from "@/components/pages/AnswerKeyEditor";
 import { ProtectedLayout } from "@/components/layout/ProtectedLayout";
+import { use } from "react";
 
-export const metadata: Metadata = {
-  title: "Edit Answer Key - SIA",
-};
-
-export default function EditKeyPage({ params }: { params: { id: string } }) {
+export default function EditKeyPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params);
+  
   return (
     <ProtectedLayout>
-      <AnswerKeyEditor params={params} />
+      <AnswerKeyEditor params={{ id }} />
     </ProtectedLayout>
   );
 }

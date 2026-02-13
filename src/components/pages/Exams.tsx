@@ -27,28 +27,29 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { CreateExamModal } from '@/components/modals/CreateExamModal';
+import { useAuth } from '@/contexts/AuthContext';
+import { 
+  createExam, 
+  getExams, 
+  deleteExam,
+  type Exam,
+  type ExamFormData 
+} from '@/services/examService';
+import { AnswerKeyService } from '@/services/answerKeyService';
 
-interface Exam {
-  id: string;
-  title: string;
-  subject: string;
-  num_items: number;
-  choices_per_item: number;
-  created_at: string;
-  answer_keys: { id: string }[];
-  generated_sheets: { sheet_count: number }[];
-}
-
-interface ExamFormData {
-  name: string;
-  totalQuestions: number;
-  date: string;
-  folder: string;
+// Extended exam type with answer key status
+interface ExamWithStatus extends Exam {
+  answerKeyStatus?: {
+    total: number;
+    completed: number;
+    hasAnswerKey: boolean;
+  };
 }
 
 export default function Exams() {
+  const { user } = useAuth();
   const searchParams = useSearchParams(); 
-  const [exams, setExams] = useState<Exam[]>([]);
+  const [exams, setExams] = useState<ExamWithStatus[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -90,7 +91,51 @@ export default function Exams() {
 
   const fetchExams = async () => {
     try {
-      setExams([]);
+      if (!user?.id) {
+        setExams([]);
+        setLoading(false);
+        return;
+      }
+
+      const fetchedExams = await getExams(user.id);
+      
+      // Fetch answer key status for each exam
+      const examsWithStatus = await Promise.all(
+        fetchedExams.map(async (exam) => {
+          try {
+            const result = await AnswerKeyService.getAnswerKeyByExamId(exam.id);
+            if (result.success && result.data) {
+              const answersCount = result.data.answers.length;
+              return {
+                ...exam,
+                answerKeyStatus: {
+                  total: exam.num_items,
+                  completed: answersCount,
+                  hasAnswerKey: true
+                }
+              };
+            }
+          } catch (error) {
+            console.error(`Error fetching answer key for exam ${exam.id}:`, error);
+            // Log the full error for debugging
+            if (error instanceof Error) {
+              console.error('Error details:', error.message, error.stack);
+            }
+          }
+          
+          // No answer key found or error occurred
+          return {
+            ...exam,
+            answerKeyStatus: {
+              total: exam.num_items,
+              completed: 0,
+              hasAnswerKey: false
+            }
+          };
+        })
+      );
+      
+      setExams(examsWithStatus);
     } catch (error) {
       console.error('Error fetching exams:', error);
       toast.error('Failed to load exams');
@@ -101,21 +146,19 @@ export default function Exams() {
 
   useEffect(() => {
     fetchExams();
-  }, []);
+  }, [user]);
 
   const handleCreateExam = async (formData: ExamFormData) => {
     try {
-      const newExam: Exam = {
-        id: `exam_${Date.now()}`,
-        title: formData.name,
-        subject: formData.folder,
-        num_items: formData.totalQuestions,
-        choices_per_item: 4,
-        created_at: new Date(formData.date).toISOString(),
-        answer_keys: [],
-        generated_sheets: []
-      };
+      if (!user?.id) {
+        toast.error('You must be logged in to create an exam');
+        return;
+      }
 
+      // Save to Firestore
+      const newExam = await createExam(formData, user.id);
+
+      // Update local state
       setExams([newExam, ...exams]);
       toast.success(`Exam "${formData.name}" created successfully`);
       setShowCreateModal(false);
@@ -129,8 +172,12 @@ export default function Exams() {
     if (!deleteId) return;
     
     try {
-      toast.success('Exam deleted successfully');
+      // Delete from Firestore
+      await deleteExam(deleteId);
+      
+      // Update local state
       setExams(exams.filter(e => e.id !== deleteId));
+      toast.success('Exam deleted successfully');
     } catch (error) {
       console.error('Error deleting exam:', error);
       toast.error('Failed to delete exam');
@@ -187,6 +234,7 @@ export default function Exams() {
             <TableRow className="bg-table-header hover:bg-table-header">
               <TableHead>Title</TableHead>
               <TableHead>Subject</TableHead>
+              <TableHead>Class</TableHead>
               <TableHead className="text-center">Items</TableHead>
               <TableHead className="text-center">Choices</TableHead>
               <TableHead className="text-center">Answer Key</TableHead>
@@ -197,7 +245,7 @@ export default function Exams() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center py-12">
+                <TableCell colSpan={8} className="text-center py-12">
                   <div className="flex items-center justify-center gap-2">
                     <div className="w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin" />
                     Loading exams...
@@ -206,7 +254,7 @@ export default function Exams() {
               </TableRow>
             ) : filteredExams.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center py-12">
+                <TableCell colSpan={8} className="text-center py-12">
                   <FileText className="w-10 h-10 mx-auto mb-2 text-muted-foreground/50" />
                   <p className="text-muted-foreground">
                     {search ? 'No exams found matching your search' : 'No exams created yet'}
@@ -227,16 +275,23 @@ export default function Exams() {
                 <TableRow key={exam.id} className="hover:bg-table-row-hover">
                   <TableCell className="font-medium">{exam.title}</TableCell>
                   <TableCell className="text-muted-foreground">{exam.subject}</TableCell>
+                  <TableCell className="text-muted-foreground">{exam.className || '—'}</TableCell>
                   <TableCell className="text-center">{exam.num_items}</TableCell>
                   <TableCell className="text-center">{exam.choices_per_item}</TableCell>
                   <TableCell className="text-center">
-                    {exam.answer_keys?.length === exam.num_items ? (
-                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-success/10 text-success">
-                        Complete
-                      </span>
+                    {exam.answerKeyStatus?.hasAnswerKey ? (
+                      exam.answerKeyStatus.completed === exam.answerKeyStatus.total ? (
+                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-success/10 text-success">
+                          Complete
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-warning/10 text-warning">
+                          {exam.answerKeyStatus.completed}/{exam.answerKeyStatus.total}
+                        </span>
+                      )
                     ) : (
-                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-warning/10 text-warning">
-                        {exam.answer_keys?.length || 0}/{exam.num_items}
+                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-muted/50 text-muted-foreground">
+                        Not started
                       </span>
                     )}
                   </TableCell>
