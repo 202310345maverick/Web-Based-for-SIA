@@ -138,43 +138,41 @@ export default function ExamDetails({ params }: ExamDetailsProps) {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Link
-            href="/exams"
-            className="p-2 hover:bg-muted rounded-md transition-colors"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </Link>
-          <div>
-            <h1 className="text-3xl font-bold text-foreground">{exam.title}</h1>
-            <p className="text-sm text-muted-foreground">ID: {exam.id}</p>
-          </div>
+      <div className="flex items-center gap-3 sm:gap-4">
+        <Link
+          href="/exams"
+          className="p-2 hover:bg-muted rounded-md transition-colors"
+        >
+          <ArrowLeft className="w-5 h-5" />
+        </Link>
+        <div className="min-w-0">
+          <h1 className="text-xl sm:text-3xl font-bold text-foreground truncate">{exam.title}</h1>
+          <p className="text-xs sm:text-sm text-muted-foreground truncate">ID: {exam.id}</p>
         </div>
       </div>
 
       {/* Exam Information */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card className="p-4 border">
-          <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Total Questions</p>
-          <p className="text-2xl font-bold text-primary">{exam.num_items}</p>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+        <Card className="p-3 sm:p-4 border">
+          <p className="text-[10px] sm:text-xs font-semibold text-muted-foreground uppercase mb-1">Total Questions</p>
+          <p className="text-xl sm:text-2xl font-bold text-primary">{exam.num_items}</p>
         </Card>
-        <Card className="p-4 border">
-          <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Exam Date</p>
-          <p className="text-2xl font-bold text-foreground">{new Date(exam.created_at).toLocaleDateString()}</p>
+        <Card className="p-3 sm:p-4 border">
+          <p className="text-[10px] sm:text-xs font-semibold text-muted-foreground uppercase mb-1">Exam Date</p>
+          <p className="text-xl sm:text-2xl font-bold text-foreground">{new Date(exam.created_at).toLocaleDateString()}</p>
         </Card>
-        <Card className="p-4 border">
-          <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Status</p>
-          <p className="text-2xl font-bold text-primary">
+        <Card className="p-3 sm:p-4 border">
+          <p className="text-[10px] sm:text-xs font-semibold text-muted-foreground uppercase mb-1">Status</p>
+          <p className="text-xl sm:text-2xl font-bold text-primary">
             {answerKeyStatus.hasAnswerKey 
               ? (answerKeyStatus.completed === answerKeyStatus.total ? 'Complete' : 'In Progress')
               : 'Not started'
             }
           </p>
         </Card>
-        <Card className="p-4 border">
-          <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Folder</p>
-          <p className="text-2xl font-bold text-foreground">{exam.subject}</p>
+        <Card className="p-3 sm:p-4 border">
+          <p className="text-[10px] sm:text-xs font-semibold text-muted-foreground uppercase mb-1">Folder</p>
+          <p className="text-xl sm:text-2xl font-bold text-foreground">{exam.subject}</p>
         </Card>
       </div>
 

@@ -228,17 +228,17 @@ export default function Exams() {
       </Card>
 
       {/* Table */}
-      <Card className="table-container">
+      <Card className="table-container overflow-x-auto">
         <Table>
           <TableHeader>
             <TableRow className="bg-table-header hover:bg-table-header">
               <TableHead>Title</TableHead>
-              <TableHead>Subject</TableHead>
-              <TableHead>Class</TableHead>
+              <TableHead className="hidden sm:table-cell">Subject</TableHead>
+              <TableHead className="hidden lg:table-cell">Class</TableHead>
               <TableHead className="text-center">Items</TableHead>
-              <TableHead className="text-center">Choices</TableHead>
-              <TableHead className="text-center">Answer Key</TableHead>
-              <TableHead className="text-center">Sheets Generated</TableHead>
+              <TableHead className="text-center hidden md:table-cell">Choices</TableHead>
+              <TableHead className="text-center hidden sm:table-cell">Answer Key</TableHead>
+              <TableHead className="text-center hidden lg:table-cell">Sheets Generated</TableHead>
               <TableHead className="text-center">Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -274,11 +274,11 @@ export default function Exams() {
               filteredExams.map((exam) => (
                 <TableRow key={exam.id} className="hover:bg-table-row-hover">
                   <TableCell className="font-medium">{exam.title}</TableCell>
-                  <TableCell className="text-muted-foreground">{exam.subject}</TableCell>
-                  <TableCell className="text-muted-foreground">{exam.className || '—'}</TableCell>
+                  <TableCell className="text-muted-foreground hidden sm:table-cell">{exam.subject}</TableCell>
+                  <TableCell className="text-muted-foreground hidden lg:table-cell">{exam.className || '—'}</TableCell>
                   <TableCell className="text-center">{exam.num_items}</TableCell>
-                  <TableCell className="text-center">{exam.choices_per_item}</TableCell>
-                  <TableCell className="text-center">
+                  <TableCell className="text-center hidden md:table-cell">{exam.choices_per_item}</TableCell>
+                  <TableCell className="text-center hidden sm:table-cell">
                     {exam.answerKeyStatus?.hasAnswerKey ? (
                       exam.answerKeyStatus.completed === exam.answerKeyStatus.total ? (
                         <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-success/10 text-success">
@@ -295,7 +295,7 @@ export default function Exams() {
                       </span>
                     )}
                   </TableCell>
-                  <TableCell className="text-center">{getTotalSheets(exam)}</TableCell>
+                  <TableCell className="text-center hidden lg:table-cell">{getTotalSheets(exam)}</TableCell>
                   <TableCell>
                     <div className="flex items-center justify-center gap-1">
                       <Link href={`/exams/${exam.id}`}>

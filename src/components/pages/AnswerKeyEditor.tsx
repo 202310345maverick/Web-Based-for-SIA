@@ -267,7 +267,7 @@ export default function AnswerKeyEditor({ params }: AnswerKeyEditorProps) {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div className="flex items-center gap-4">
           <Link
             href={`/exams/${params.id}`}
@@ -276,25 +276,25 @@ export default function AnswerKeyEditor({ params }: AnswerKeyEditorProps) {
             <ArrowLeft className="w-5 h-5" />
           </Link>
           <div>
-            <h1 className="text-3xl font-bold text-foreground">Edit Answer Key</h1>
-            <p className="text-sm text-muted-foreground">{exam.title} - Set correct answers for all questions</p>
+            <h1 className="text-xl sm:text-3xl font-bold text-foreground">Edit Answer Key</h1>
+            <p className="text-xs sm:text-sm text-muted-foreground">{exam.title} - Set correct answers</p>
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 flex-wrap">
           {/* Download Template Button */}
           <button
             onClick={handleDownloadTemplate}
-            className="flex items-center gap-2 px-4 py-2 border border-muted rounded-md font-semibold hover:bg-muted transition-colors"
+            className="flex items-center gap-2 px-3 py-2 border border-muted rounded-md font-semibold hover:bg-muted transition-colors text-sm"
             title="Download Excel template"
           >
             <Download className="w-4 h-4" />
-            Template
+            <span className="hidden sm:inline">Template</span>
           </button>
 
           {/* Upload Answer Key Button */}
-          <label className="flex items-center gap-2 px-4 py-2 border border-muted rounded-md font-semibold hover:bg-muted transition-colors cursor-pointer">
+          <label className="flex items-center gap-2 px-3 py-2 border border-muted rounded-md font-semibold hover:bg-muted transition-colors cursor-pointer text-sm">
             <Upload className="w-4 h-4" />
-            Upload
+            <span className="hidden sm:inline">Upload</span>
             <input
               type="file"
               accept=".xlsx,.xls,.csv"
@@ -313,7 +313,7 @@ export default function AnswerKeyEditor({ params }: AnswerKeyEditorProps) {
           <button
             onClick={handleSaveAnswerKey}
             disabled={saving || isLocked}
-            className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex items-center gap-2 px-3 py-2 bg-primary text-primary-foreground rounded-md font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm"
           >
             {saved ? (
               <>
@@ -344,22 +344,22 @@ export default function AnswerKeyEditor({ params }: AnswerKeyEditorProps) {
 
       {/* Progress Card */}
       <Card className="p-4 border bg-blue-50">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-4">
           <div>
-            <p className="text-sm font-semibold text-muted-foreground mb-1">Progress</p>
-            <p className="text-2xl font-bold text-primary">{answersEntered} / {totalQuestions}</p>
+            <p className="text-xs sm:text-sm font-semibold text-muted-foreground mb-1">Progress</p>
+            <p className="text-xl sm:text-2xl font-bold text-primary">{answersEntered} / {totalQuestions}</p>
           </div>
-          <div className="w-24 h-24 rounded-full bg-white border-4 border-primary flex items-center justify-center">
+          <div className="w-16 h-16 sm:w-24 sm:h-24 rounded-full bg-white border-4 border-primary flex items-center justify-center flex-shrink-0">
             <div className="text-center">
-              <p className="text-2xl font-bold text-primary">{answersPercentage}%</p>
-              <p className="text-xs text-muted-foreground">Complete</p>
+              <p className="text-lg sm:text-2xl font-bold text-primary">{answersPercentage}%</p>
+              <p className="text-[10px] sm:text-xs text-muted-foreground">Complete</p>
             </div>
           </div>
         </div>
       </Card>
 
-      {/* Answer Key Grid - 5 questions per row */}
-      <div className="grid grid-cols-5 gap-3">
+      {/* Answer Key Grid - responsive: 2 cols mobile, 3 sm, 5 md+ */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2 sm:gap-3">
         {Array.from({ length: totalQuestions }, (_, i) => i + 1).map((questionNum) => (
           <div key={questionNum} className={`p-3 rounded-lg border transition-all ${answers[questionNum] ? 'bg-blue-50 border-primary' : 'bg-background border-muted'}`}>
             <div className="text-center mb-2">
@@ -397,7 +397,7 @@ export default function AnswerKeyEditor({ params }: AnswerKeyEditorProps) {
       </div>
 
       {/* Action Bar */}
-      <div className="flex gap-3">
+      <div className="flex flex-col sm:flex-row gap-3">
         <Link
           href={`/exams/${params.id}`}
           className="flex-1 px-4 py-3 border rounded-md font-semibold text-center hover:bg-muted transition-colors"

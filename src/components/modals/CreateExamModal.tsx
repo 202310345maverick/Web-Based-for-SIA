@@ -22,6 +22,7 @@ interface ExamFormData {
   classId?: string; // Store the class ID for reference
   choicesPerItem?: number;
   examType?: 'board' | 'diagnostic';
+  choicePoints?: { [choice: string]: number };
 }
 
 export function CreateExamModal({ isOpen, onClose, onCreateExam }: CreateExamModalProps) {
@@ -40,6 +41,7 @@ export function CreateExamModal({ isOpen, onClose, onCreateExam }: CreateExamMod
   const [step, setStep] = useState(1);
   const [classes, setClasses] = useState<Class[]>([]);
   const [loadingClasses, setLoadingClasses] = useState(false);
+  const [pointErrors, setPointErrors] = useState<{ [key: string]: string }>({});
 
   // Fetch classes from Firestore
   useEffect(() => {
@@ -94,7 +96,9 @@ export function CreateExamModal({ isOpen, onClose, onCreateExam }: CreateExamMod
       classId: undefined,
       choicesPerItem: 4,
       examType: 'board',
+      choicePoints: {},
     });
+    setPointErrors({});
     setStep(1);
     onClose();
   };
@@ -224,8 +228,76 @@ export function CreateExamModal({ isOpen, onClose, onCreateExam }: CreateExamMod
             </div>
           )}
 
-          {/* Step 5: Exam Type */}
+          {/* Step 5: Configure Points per Choice */}
           {step === 5 && (
+            <div className="space-y-4">
+              <div>
+                <span className="text-sm font-semibold text-foreground mb-3 block">Configure Points per Choice</span>
+                <p className="text-xs text-muted-foreground mb-4">
+                  Set points for each choice (A-{String.fromCharCode(64 + (formData.choicesPerItem || 4))})
+                </p>
+              </div>
+              <div className="space-y-3 max-h-48 overflow-y-auto">
+                {Array.from({ length: formData.choicesPerItem || 4 }).map((_, idx) => {
+                  const choice = String.fromCharCode(65 + idx); // A, B, C, D, E
+                  const currentPoints = formData.choicePoints?.[choice] ?? '';
+                  return (
+                    <div key={choice} className="flex items-center gap-3">
+                      <label className="flex-1 flex items-center gap-2">
+                        <span className="w-8 h-8 flex items-center justify-center bg-primary text-primary-foreground rounded font-bold text-sm">
+                          {choice}
+                        </span>
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          value={currentPoints}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            const numValue = value ? parseInt(value) : 0;
+                            
+                            // Validation
+                            if (value && (isNaN(numValue) || numValue < 0 || numValue > 100)) {
+                              setPointErrors(prev => ({
+                                ...prev,
+                                [choice]: 'Points must be 0-100'
+                              }));
+                            } else {
+                              setPointErrors(prev => {
+                                const newErrors = { ...prev };
+                                delete newErrors[choice];
+                                return newErrors;
+                              });
+                              setFormData(prev => ({
+                                ...prev,
+                                choicePoints: {
+                                  ...prev.choicePoints,
+                                  [choice]: numValue
+                                }
+                              }));
+                            }
+                          }}
+                          placeholder="0"
+                          className="flex-1 px-3 py-2 border rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-primary"
+                        />
+                      </label>
+                    </div>
+                  );
+                })}
+              </div>
+              {Object.keys(pointErrors).length > 0 && (
+                <div className="text-sm text-destructive">
+                  {Object.values(pointErrors).map((err, idx) => (
+                    <div key={idx}>{err}</div>
+                  ))}
+                </div>
+              )}
+              <p className="text-xs text-muted-foreground">Tip: Typically correct answers have higher points</p>
+            </div>
+          )}
+
+          {/* Step 6: Exam Type */}
+          {step === 6 && (
             <div className="space-y-4">
               <label className="block">
                 <span className="text-sm font-semibold text-foreground mb-3 block">Exam Type</span>
@@ -258,8 +330,8 @@ export function CreateExamModal({ isOpen, onClose, onCreateExam }: CreateExamMod
             </div>
           )}
 
-          {/* Step 6: Date & Folder */}
-          {step === 6 && (
+          {/* Step 7: Date & Folder */}
+          {step === 7 && (
             <div className="space-y-4">
               <label className="block">
                 <span className="text-sm font-semibold text-foreground mb-2 block">Exam Date</span>
@@ -286,7 +358,7 @@ export function CreateExamModal({ isOpen, onClose, onCreateExam }: CreateExamMod
 
           {/* Step Indicator */}
           <div className="flex gap-1 pt-4">
-            {[1, 2, 3, 4, 5, 6].map((s) => (
+            {[1, 2, 3, 4, 5, 6, 7].map((s) => (
               <div
                 key={s}
                 className={`flex-1 h-1 rounded-full ${s <= step ? 'bg-primary' : 'bg-muted'}`}
@@ -305,12 +377,17 @@ export function CreateExamModal({ isOpen, onClose, onCreateExam }: CreateExamMod
               Back
             </button>
           )}
-          {step < 6 ? (
+          {step < 7 ? (
             <button
               onClick={() => {
                 // Validate Step 4 (Class selection) before proceeding
                 if (step === 4 && !formData.className) {
                   toast.error('Please select a class before continuing');
+                  return;
+                }
+                // Validate Step 5 (Points) before proceeding
+                if (step === 5 && Object.keys(pointErrors).length > 0) {
+                  toast.error('Please fix point errors before continuing');
                   return;
                 }
                 setStep(step + 1);

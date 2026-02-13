@@ -27,6 +27,7 @@ export interface Exam {
   updatedAt?: string;
   className?: string;
   examType?: 'board' | 'diagnostic';
+  choicePoints?: { [choice: string]: number };
 }
 
 export interface GeneratedSheet {
@@ -44,6 +45,7 @@ export interface ExamFormData {
   classId?: string;
   choicesPerItem?: number;
   examType?: 'board' | 'diagnostic';
+  choicePoints?: { [choice: string]: number };
 }
 
 /**
@@ -68,6 +70,7 @@ export async function createExam(
       className: formData.className || null,
       classId: formData.classId || null,
       examType: formData.examType || 'board',
+      choicePoints: formData.choicePoints || {},
     };
     const docRef = await addDoc(collection(db, "exams"), examData);
 
@@ -85,6 +88,7 @@ export async function createExam(
       updatedAt: new Date().toISOString(),
       className: examData.className || undefined,
       examType: examData.examType || 'board',
+      choicePoints: examData.choicePoints,
     };
 
     return newExam;
