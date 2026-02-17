@@ -43,9 +43,11 @@ export function Sidebar() {
   };
 
   const handleNavClick = () => {
+    // Close sidebar on mobile when a link is clicked
     setMobileOpen(false);
   };
 
+  // Get first letter of email for avatar
   const getEmailInitial = () => {
     if (user?.email) {
       return user.email.charAt(0).toUpperCase();

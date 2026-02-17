@@ -55,6 +55,7 @@ export default function Dashboard() {
           return;
         }
 
+        // Fetch real exams from Firestore
         const exams = await getExams(user.id);
         
         setStats({

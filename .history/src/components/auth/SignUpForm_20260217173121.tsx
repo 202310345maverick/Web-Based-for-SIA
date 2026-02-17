@@ -21,8 +21,10 @@ export function SignUpForm({ onToggleMode }: SignUpFormProps) {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
+  // Redirect to dashboard when user is authenticated after signup
   useEffect(() => {
     if (user && success) {
+      // Small delay to show success message
       const timer = setTimeout(() => {
         router.push('/dashboard');
       }, 1500);
@@ -76,6 +78,7 @@ export function SignUpForm({ onToggleMode }: SignUpFormProps) {
   return (
     <div className="min-h-screen flex items-center justify-center p-4" style={{ backgroundColor: '#F8FAF5' }}>
       <div className="w-full max-w-md">
+        {/* Logo with design department styling and S box */}
         <div className="text-center mb-8">
           <div className="flex items-center justify-center gap-3">
             <div className="w-12 h-12 flex items-center justify-center rounded-lg" style={{ backgroundColor: '#3E5F44' }}>
@@ -83,8 +86,11 @@ export function SignUpForm({ onToggleMode }: SignUpFormProps) {
             </div>
             <h1 className="text-5xl font-bold tracking-tight" style={{ color: '#3E5F44' }}>SIA</h1>
           </div>
+          <p className="text-sm font-medium mt-1 tracking-wide" style={{ color: '#6B7F70' }}>DESIGN DEPARTMENT</p>
+          <p className="text-xs mt-2" style={{ color: '#9AAEA3' }}>SIA UI UX DESIGN</p>
         </div>
 
+        {/* Sign Up Box */}
         <div className="rounded-2xl p-8" style={{ 
           backgroundColor: '#FFFFFF', 
           borderColor: '#E8EDE6', 

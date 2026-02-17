@@ -43,9 +43,11 @@ export function Sidebar() {
   };
 
   const handleNavClick = () => {
+    // Close sidebar on mobile when a link is clicked
     setMobileOpen(false);
   };
 
+  // Get first letter of email for avatar
   const getEmailInitial = () => {
     if (user?.email) {
       return user.email.charAt(0).toUpperCase();
@@ -55,6 +57,7 @@ export function Sidebar() {
 
   return (
     <>
+      {/* Mobile Header Bar */}
       <div className="md:hidden fixed top-0 left-0 right-0 h-12 bg-[#3E5F44] border-b z-50 flex items-center px-3">
         <button
           onClick={() => setMobileOpen(!mobileOpen)}
@@ -65,6 +68,7 @@ export function Sidebar() {
         <h1 className="ml-2 font-bold text-white text-sm">SIA</h1>
       </div>
 
+      {/* Mobile Overlay */}
       {mobileOpen && (
         <div
           className="md:hidden fixed inset-0 bg-black/50 z-40"
@@ -72,6 +76,7 @@ export function Sidebar() {
         />
       )}
 
+      {/* Sidebar */}
       <aside 
         className={cn(
           "h-screen bg-[#3E5F44] flex flex-col transition-all duration-300 fixed left-0 top-0 z-40 border-r border-[#2F4A35]",
@@ -80,7 +85,7 @@ export function Sidebar() {
           collapsed ? "md:w-16" : "md:w-64",
         )}
       >
-
+        {/* Header */}
         <div className="p-5 border-b border-[#2F4A35]">
           {!collapsed && (
             <div className="overflow-hidden flex items-center gap-3">
@@ -92,6 +97,7 @@ export function Sidebar() {
           )}
         </div>
 
+        {/* Navigation */}
         <nav className="flex-1 p-2 space-y-0.5">
           {navItems.map((item) => {
             const Icon = item.icon;
@@ -114,6 +120,7 @@ export function Sidebar() {
           })}
         </nav>
 
+        {/* Footer */}
         <div className="p-2 border-t border-[#2F4A35]">
           {!collapsed && user && (
             <div className="px-2 py-2 mb-2 flex items-center gap-3">
@@ -136,6 +143,7 @@ export function Sidebar() {
           </div>
         </div>
 
+        {/* Collapse Toggle */}
         <Button
           variant="ghost"
           size="icon"
@@ -150,13 +158,14 @@ export function Sidebar() {
         </Button>
       </aside>
 
+      {/* Mobile Sidebar Drawer */}
       <aside 
         className={cn(
           "md:hidden h-screen bg-[#3E5F44] flex flex-col fixed left-0 top-12 z-40 border-r border-[#2F4A35] w-56 transition-transform duration-300",
           mobileOpen ? "translate-x-0" : "-translate-x-full"
         )}
       >
-
+        {/* Navigation */}
         <nav className="flex-1 p-3 space-y-1">
           {navItems.map((item) => {
             const Icon = item.icon;
@@ -180,6 +189,7 @@ export function Sidebar() {
           })}
         </nav>
 
+        {/* Footer */}
         <div className="p-3 border-t border-[#2F4A35]">
           {user && (
             <div className="px-3 py-2 mb-2 flex items-center gap-3">

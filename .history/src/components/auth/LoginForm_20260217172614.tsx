@@ -19,8 +19,8 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
-  const [rememberMe, setRememberMe] = useState(false);
 
+  // Redirect to dashboard when user is authenticated
   useEffect(() => {
     if (user && !loading) {
       router.push('/dashboard');
@@ -38,21 +38,18 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
       setError(error.message);
       setLoading(false);
     }
+    // Don't redirect here - let useEffect handle it when user state updates
   };
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4" style={{ backgroundColor: '#F8FAF5' }}>
       <div className="w-full max-w-md">
-        {/* Logo with design department styling and S box */}
+        {/* Logo with design department styling */}
         <div className="text-center mb-8">
-          <div className="flex items-center justify-center gap-3">
-            <div className="w-12 h-12 flex items-center justify-center rounded-lg" style={{ backgroundColor: '#3E5F44' }}>
-              <span className="text-2xl font-bold text-white">S</span>
-            </div>
-            <h1 className="text-5xl font-bold tracking-tight" style={{ color: '#3E5F44' }}>SIA</h1>
-          </div>
+          <h1 className="text-5xl font-bold tracking-tight" style={{ color: '#3E5F44' }}>SIA</h1>
         </div>
 
+        {/* Login Box with enhanced border and shadow */}
         <div className="rounded-2xl p-8" style={{ 
           backgroundColor: '#FFFFFF', 
           borderColor: '#E8EDE6', 
@@ -157,29 +154,6 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
                     required
                     autoFocus
                   />
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={rememberMe}
-                      onChange={(e) => setRememberMe(e.target.checked)}
-                      className="w-4 h-4 rounded border-2"
-                      style={{ 
-                        accentColor: '#3E5F44',
-                        borderColor: '#D0D9D2'
-                      }}
-                    />
-                    <span className="text-sm font-medium" style={{ color: '#2C3E2F' }}>Remember me</span>
-                  </label>
-                  <button
-                    type="button"
-                    className="text-sm font-medium hover:underline transition-all"
-                    style={{ color: '#3E5F44' }}
-                  >
-                    Forgot password?
-                  </button>
                 </div>
 
                 <button 

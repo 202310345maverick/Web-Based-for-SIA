@@ -21,6 +21,7 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
 
+  // Redirect to dashboard when user is authenticated
   useEffect(() => {
     if (user && !loading) {
       router.push('/dashboard');
@@ -38,6 +39,7 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
       setError(error.message);
       setLoading(false);
     }
+    // Don't redirect here - let useEffect handle it when user state updates
   };
 
   return (
