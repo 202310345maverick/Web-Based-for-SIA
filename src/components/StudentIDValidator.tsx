@@ -13,14 +13,12 @@ import { StudentIDValidationService } from '@/services/studentIDValidationServic
 interface StudentIDValidatorProps {
   studentId: string;
   onValidationChange: (isValid: boolean, errors: string[]) => void;
-  disabled?: boolean;
   showFeedback?: boolean;
 }
 
 export function StudentIDValidator({
   studentId,
   onValidationChange,
-  disabled = false,
   showFeedback = true,
 }: StudentIDValidatorProps) {
   const [validation, setValidation] = useState<{
@@ -29,13 +27,11 @@ export function StudentIDValidator({
     isDuplicate: boolean;
     error?: string;
   } | null>(null);
-  const [isChecking, setIsChecking] = useState(false);
 
   useEffect(() => {
     const validateId = async () => {
       if (!showFeedback) return;
 
-      setIsChecking(true);
       try {
         const result = await StudentIDValidationService.validateStudentId(studentId);
         setValidation({
@@ -54,8 +50,6 @@ export function StudentIDValidator({
           error: errorMsg,
         });
         onValidationChange(false, [errorMsg]);
-      } finally {
-        setIsChecking(false);
       }
     };
 

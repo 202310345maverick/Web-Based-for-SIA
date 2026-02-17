@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
+import { useState } from 'react';
 import { 
   LayoutDashboard, 
   FileText, 
@@ -19,6 +20,15 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useSidebarContext } from '@/contexts/SidebarContext';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 const navItems = [
   { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -35,10 +45,12 @@ export function Sidebar() {
   const router = useRouter();
   const { signOut, user } = useAuth();
   const { collapsed, setCollapsed, mobileOpen, setMobileOpen } = useSidebarContext();
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
-  const handleSignOut = () => {
+  const handleSignOutConfirm = () => {
     signOut();
     setMobileOpen(false);
+    setShowLogoutConfirm(false);
     router.push('/');
   };
 
@@ -120,7 +132,7 @@ export function Sidebar() {
             </div>
           )}
           <button
-            onClick={handleSignOut}
+            onClick={() => setShowLogoutConfirm(true)}
             className="sidebar-item w-full text-left hover:bg-destructive/10 hover:text-destructive"
           >
             <LogOut className="w-4 h-4 flex-shrink-0" />
@@ -184,7 +196,7 @@ export function Sidebar() {
             </div>
           )}
           <button
-            onClick={handleSignOut}
+            onClick={() => setShowLogoutConfirm(true)}
             className="sidebar-item w-full text-left hover:bg-destructive/10 hover:text-destructive"
           >
             <LogOut className="w-5 h-5 flex-shrink-0" />
@@ -192,6 +204,24 @@ export function Sidebar() {
           </button>
         </div>
       </aside>
+
+      {/* Logout Confirmation Dialog */}
+      <AlertDialog open={showLogoutConfirm} onOpenChange={setShowLogoutConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Sign out?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to sign out? You'll need to log in again to access your account.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="flex gap-3 justify-end">
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleSignOutConfirm} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Sign out
+            </AlertDialogAction>
+          </div>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

@@ -1,21 +1,14 @@
-/**
- * Student Service - Enforces Student ID as primary key across system
- * Handles all student-related operations with Student ID as the unique identifier
- */
-
 import {
   collection,
   doc,
   setDoc,
   getDoc,
   updateDoc,
-  deleteDoc,
   query,
   where,
   getDocs,
   serverTimestamp,
   writeBatch,
-  Timestamp,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { StudentIDValidationService } from './studentIDValidationService';
