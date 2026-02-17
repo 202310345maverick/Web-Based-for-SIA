@@ -190,12 +190,12 @@ export default function AnswerKeyEditor({ params }: AnswerKeyEditorProps) {
         const data = new Uint8Array(e.target?.result as ArrayBuffer);
         const workbook = XLSX.read(data, { type: 'array' });
         const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-        const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1 }) as any[][];
+        const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1 }) as (string | number)[][];
 
         // Skip header row
         const answerData: { [key: number]: AnswerChoice } = {};
         const validChoices = ['A', 'B', 'C', 'D', 'E'].slice(0, exam.choices_per_item);
-        let errors: string[] = [];
+        const errors: string[] = [];
 
         for (let i = 1; i < jsonData.length; i++) {
           const row = jsonData[i];

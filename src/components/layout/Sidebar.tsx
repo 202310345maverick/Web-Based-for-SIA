@@ -10,7 +10,6 @@ import {
   ChevronLeft,
   ChevronRight,
   BarChart3,
-  Scroll,
   Archive,
   Settings,
   Menu,

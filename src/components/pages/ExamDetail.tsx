@@ -8,12 +8,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { 
   ArrowLeft, 
   Loader2, 
-  FileText, 
   Key, 
   Printer,
   CheckCircle,
@@ -22,19 +20,11 @@ import {
 import { generateAnswerSheetPDF } from '@/lib/pdfGenerator';
 import { getExamById, type Exam } from '@/services/examService';
 
-interface AnswerKey {
-  id: string;
-  item_number: number;
-  correct_answer: string;
-}
-
 export default function ExamDetail() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const { user } = useAuth();
   
   const [exam, setExam] = useState<Exam | null>(null);
-  const [answerKeys, setAnswerKeys] = useState<AnswerKey[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -58,7 +48,6 @@ export default function ExamDetail() {
       }
       
       setExam(examData);
-      setAnswerKeys([]);
       setAnswers({});
       setTotalGenerated(0);
     } catch (error) {
