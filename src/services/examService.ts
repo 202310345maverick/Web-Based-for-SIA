@@ -20,6 +20,7 @@ export interface Exam {
   subject: string;
   num_items: number;
   choices_per_item: number;
+  student_id_length?: number;
   created_at: string;
   answer_keys: string[];
   generated_sheets: GeneratedSheet[];
