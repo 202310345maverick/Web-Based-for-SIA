@@ -21,6 +21,7 @@ export function SignUpForm({ onToggleMode }: SignUpFormProps) {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
+  // Redirect to dashboard when user is authenticated after signup
   useEffect(() => {
     if (user && success) {
       const timer = setTimeout(() => {

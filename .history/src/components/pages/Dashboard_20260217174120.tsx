@@ -55,11 +55,12 @@ export default function Dashboard() {
           return;
         }
 
+        // Fetch real exams from Firestore
         const exams = await getExams(user.id);
         
         setStats({
           totalExams: exams.length,
-          totalStudents: 0, 
+          totalStudents: 0, // TODO: Implement student count
           totalSheets: exams.reduce((sum, exam) => 
             sum + (exam.generated_sheets?.reduce((s, sheet) => s + (sheet.sheet_count || 0), 0) || 0), 0
           ),
@@ -89,8 +90,10 @@ const handleCreateExam = async (formData: ExamFormData) => {
       return;
     }
 
+    // Save to Firestore
     const newExam = await createExam(formData, user.id);
 
+    // Update stats
     setStats(prev => ({
       ...prev,
       totalExams: prev.totalExams + 1,
@@ -109,6 +112,7 @@ const handleCreateExam = async (formData: ExamFormData) => {
     toast.success(`Exam "${formData.name}" created successfully`);
     setShowCreateModal(false);
     
+    // Navigate to the exam detail page
     router.push(`/exams/${newExam.id}`);
     
   } catch (error) {
@@ -124,7 +128,7 @@ const handleCreateExam = async (formData: ExamFormData) => {
       icon: FileText,
       color: 'text-accent',
       bgColor: 'bg-accent/10',
-      borderColor: 'border-[#4F7A6B]', 
+      borderColor: 'border-[#4F7A6B]', // Changed to match hover color
     },
     {
       title: 'Students',

@@ -55,11 +55,12 @@ export default function Dashboard() {
           return;
         }
 
+        // Fetch real exams from Firestore
         const exams = await getExams(user.id);
         
         setStats({
           totalExams: exams.length,
-          totalStudents: 0, 
+          totalStudents: 0, // TODO: Implement student count
           totalSheets: exams.reduce((sum, exam) => 
             sum + (exam.generated_sheets?.reduce((s, sheet) => s + (sheet.sheet_count || 0), 0) || 0), 0
           ),
@@ -89,8 +90,10 @@ const handleCreateExam = async (formData: ExamFormData) => {
       return;
     }
 
+    // Save to Firestore
     const newExam = await createExam(formData, user.id);
 
+    // Update stats
     setStats(prev => ({
       ...prev,
       totalExams: prev.totalExams + 1,
@@ -109,6 +112,7 @@ const handleCreateExam = async (formData: ExamFormData) => {
     toast.success(`Exam "${formData.name}" created successfully`);
     setShowCreateModal(false);
     
+    // Navigate to the exam detail page
     router.push(`/exams/${newExam.id}`);
     
   } catch (error) {
@@ -124,7 +128,6 @@ const handleCreateExam = async (formData: ExamFormData) => {
       icon: FileText,
       color: 'text-accent',
       bgColor: 'bg-accent/10',
-      borderColor: 'border-[#4F7A6B]', 
     },
     {
       title: 'Students',
@@ -132,7 +135,6 @@ const handleCreateExam = async (formData: ExamFormData) => {
       icon: Users,
       color: 'text-primary',
       bgColor: 'bg-primary/10',
-      borderColor: 'border-[#4F7A6B]', 
     },
     {
       title: 'Answer Sheets',
@@ -140,12 +142,12 @@ const handleCreateExam = async (formData: ExamFormData) => {
       icon: ClipboardList,
       color: 'text-success',
       bgColor: 'bg-success/10',
-      borderColor: 'border-[#4F7A6B]', 
     },
   ];
 
   return (
     <div className="page-container">
+      {/* Header */}
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-foreground">Dashboard</h1>
         <p className="text-muted-foreground mt-1">
@@ -153,6 +155,7 @@ const handleCreateExam = async (formData: ExamFormData) => {
         </p>
       </div>
 
+      {/* Role Notice */}
       {!userRole && (
         <Card className="mb-6 border-warning/30 bg-warning/5">
           <CardContent className="py-4">
@@ -164,11 +167,12 @@ const handleCreateExam = async (formData: ExamFormData) => {
         </Card>
       )}
 
+      {/* Stats Grid */}
       <div className="grid gap-6 md:grid-cols-3 mb-8">
         {statCards.map((stat) => {
           const Icon = stat.icon;
           return (
-            <Card key={stat.title} className={`stat-card animate-slide-up border-2 ${stat.borderColor} hover:border-[#4F7A6B] transition-colors duration-200`}>
+            <Card key={stat.title} className="stat-card animate-slide-up">
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
                   <div>
@@ -187,37 +191,33 @@ const handleCreateExam = async (formData: ExamFormData) => {
         })}
       </div>
 
+      {/* Quick Actions & Recent Exams */}
       <div className="grid gap-6 lg:grid-cols-2">
-        <Card className="card-elevated border-2 border-[#4F7A6B] hover:border-[#4F7A6B] transition-colors duration-200"> {/* Changed default border to #4F7A6B */}
+        {/* Quick Actions */}
+        <Card className="card-elevated">
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">
               <TrendingUp className="w-5 h-5 text-accent" />
               Quick Actions
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-1">
+          <CardContent className="space-y-3">
             <Button 
-              className="w-full justify-start gap-3 h-12 border-2 border-[#2F4A35]/20 hover:border-[#4F7A6B] hover:bg-[#4F7A6B]/10 transition-colors duration-200" 
+              className="w-full justify-start gap-3 h-12" 
               variant="outline"
               onClick={() => setShowCreateModal(true)}
             >
               <Plus className="w-4 h-4" />
               Create New Exam
             </Button>
-            
-            <div className="h-2"></div>
-            
             <Link href="/students">
-              <Button className="w-full justify-start gap-3 h-12 border-2 border-[#2F4A35]/20 hover:border-[#4F7A6B] hover:bg-[#4F7A6B]/10 transition-colors duration-200" variant="outline">
+              <Button className="w-full justify-start gap-3 h-12" variant="outline">
                 <Users className="w-4 h-4" />
                 Manage Students
               </Button>
             </Link>
-            
-            <div className="h-2"></div>
-            
             <Link href="/exams">
-              <Button className="w-full justify-start gap-3 h-12 border-2 border-[#2F4A35]/20 hover:border-[#4F7A6B] hover:bg-[#4F7A6B]/10 transition-colors duration-200" variant="outline">
+              <Button className="w-full justify-start gap-3 h-12" variant="outline">
                 <FileText className="w-4 h-4" />
                 View All Exams
               </Button>
@@ -225,25 +225,26 @@ const handleCreateExam = async (formData: ExamFormData) => {
           </CardContent>
         </Card>
 
-        <Card className="card-elevated border-2 border-[#4F7A6B] hover:border-[#4F7A6B] transition-colors duration-200"> {/* Changed default border to #4F7A6B */}
+        {/* Recent Exams */}
+        <Card className="card-elevated">
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle className="text-lg flex items-center gap-2">
               <Clock className="w-5 h-5 text-accent" />
               Recent Exams
             </CardTitle>
             <Link href="/exams">
-              <Button variant="ghost" size="sm" className="border-2 border-transparent hover:border-[#4F7A6B] hover:bg-[#4F7A6B]/10 transition-colors duration-200">View all</Button>
+              <Button variant="ghost" size="sm">View all</Button>
             </Link>
           </CardHeader>
           <CardContent>
             {loading ? (
               <div className="space-y-3">
                 {[1, 2, 3].map((i) => (
-                  <div key={i} className="h-16 bg-muted rounded-lg animate-pulse border-2 border-[#4F7A6B]" /> /* Changed to #4F7A6B */
+                  <div key={i} className="h-16 bg-muted rounded-lg animate-pulse" />
                 ))}
               </div>
             ) : stats.recentExams.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground border-2 border-dashed border-[#4F7A6B] rounded-lg"> {/* Changed to #4F7A6B */}
+              <div className="text-center py-8 text-muted-foreground">
                 <FileText className="w-10 h-10 mx-auto mb-2 opacity-50" />
                 <p>No exams created yet</p>
                 <Button 
@@ -260,7 +261,7 @@ const handleCreateExam = async (formData: ExamFormData) => {
                   <Link 
                     key={exam.id} 
                     href={`/exams/${exam.id}`}
-                    className="block p-3 rounded-lg border-2 border-[#4F7A6B] hover:border-[#4F7A6B] hover:bg-[#4F7A6B]/10 transition-colors duration-200" /* Changed default border to #4F7A6B */
+                    className="block p-3 rounded-lg border hover:border-accent/30 hover:bg-secondary/50 transition-colors"
                   >
                     <div className="flex items-center justify-between">
                       <div>

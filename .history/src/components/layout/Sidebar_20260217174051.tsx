@@ -43,6 +43,7 @@ export function Sidebar() {
   };
 
   const handleNavClick = () => {
+    // Close sidebar on mobile when a link is clicked
     setMobileOpen(false);
   };
 

@@ -55,11 +55,12 @@ export default function Dashboard() {
           return;
         }
 
+        // Fetch real exams from Firestore
         const exams = await getExams(user.id);
         
         setStats({
           totalExams: exams.length,
-          totalStudents: 0, 
+          totalStudents: 0, // TODO: Implement student count
           totalSheets: exams.reduce((sum, exam) => 
             sum + (exam.generated_sheets?.reduce((s, sheet) => s + (sheet.sheet_count || 0), 0) || 0), 0
           ),

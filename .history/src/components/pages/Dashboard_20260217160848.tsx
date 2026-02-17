@@ -1,4 +1,4 @@
-'use client';
+"'use client';
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
@@ -55,11 +55,12 @@ export default function Dashboard() {
           return;
         }
 
+        // Fetch real exams from Firestore
         const exams = await getExams(user.id);
         
         setStats({
           totalExams: exams.length,
-          totalStudents: 0, 
+          totalStudents: 0, // TODO: Implement student count
           totalSheets: exams.reduce((sum, exam) => 
             sum + (exam.generated_sheets?.reduce((s, sheet) => s + (sheet.sheet_count || 0), 0) || 0), 0
           ),
@@ -89,8 +90,10 @@ const handleCreateExam = async (formData: ExamFormData) => {
       return;
     }
 
+    // Save to Firestore
     const newExam = await createExam(formData, user.id);
 
+    // Update stats
     setStats(prev => ({
       ...prev,
       totalExams: prev.totalExams + 1,
@@ -106,9 +109,10 @@ const handleCreateExam = async (formData: ExamFormData) => {
       ],
     }));
 
-    toast.success(`Exam "${formData.name}" created successfully`);
+    toast.success(`Exam \"${formData.name}\" created successfully`);
     setShowCreateModal(false);
     
+    // Navigate to the exam detail page
     router.push(`/exams/${newExam.id}`);
     
   } catch (error) {
@@ -124,7 +128,8 @@ const handleCreateExam = async (formData: ExamFormData) => {
       icon: FileText,
       color: 'text-accent',
       bgColor: 'bg-accent/10',
-      borderColor: 'border-[#4F7A6B]', 
+      borderColor: 'border-accent/30',
+      hoverBg: 'hover:bg-accent/5',
     },
     {
       title: 'Students',
@@ -132,7 +137,8 @@ const handleCreateExam = async (formData: ExamFormData) => {
       icon: Users,
       color: 'text-primary',
       bgColor: 'bg-primary/10',
-      borderColor: 'border-[#4F7A6B]', 
+      borderColor: 'border-primary/30',
+      hoverBg: 'hover:bg-primary/5',
     },
     {
       title: 'Answer Sheets',
@@ -140,40 +146,47 @@ const handleCreateExam = async (formData: ExamFormData) => {
       icon: ClipboardList,
       color: 'text-success',
       bgColor: 'bg-success/10',
-      borderColor: 'border-[#4F7A6B]', 
+      borderColor: 'border-success/30',
+      hoverBg: 'hover:bg-success/5',
     },
   ];
 
   return (
-    <div className="page-container">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-foreground">Dashboard</h1>
-        <p className="text-muted-foreground mt-1">
+    <div className=\"page-container\">
+      {/* Header */}
+      <div className=\"mb-8\">
+        <h1 className=\"text-3xl font-bold text-foreground\">Dashboard</h1>
+        <p className=\"text-muted-foreground mt-1\">
           Welcome back! Here's an overview of your exam management system.
         </p>
       </div>
 
+      {/* Role Notice */}
       {!userRole && (
-        <Card className="mb-6 border-warning/30 bg-warning/5">
-          <CardContent className="py-4">
-            <p className="text-sm text-warning flex items-center gap-2">
-              <Clock className="w-4 h-4" />
+        <Card className=\"mb-6 border-warning/30 bg-warning/5 hover:bg-warning/10 transition-colors\">
+          <CardContent className=\"py-4\">
+            <p className=\"text-sm text-warning flex items-center gap-2\">
+              <Clock className=\"w-4 h-4\" />
               Your account is pending role assignment. Please contact an administrator.
             </p>
           </CardContent>
         </Card>
       )}
 
-      <div className="grid gap-6 md:grid-cols-3 mb-8">
+      {/* Stats Grid */}
+      <div className=\"grid gap-6 md:grid-cols-3 mb-8\">
         {statCards.map((stat) => {
           const Icon = stat.icon;
           return (
-            <Card key={stat.title} className={`stat-card animate-slide-up border-2 ${stat.borderColor} hover:border-[#4F7A6B] transition-colors duration-200`}>
-              <CardContent className="p-6">
-                <div className="flex items-center justify-between">
+            <Card 
+              key={stat.title} 
+              className={`stat-card animate-slide-up border-2 ${stat.borderColor} ${stat.hoverBg} transition-all duration-200 hover:shadow-md`}
+            >
+              <CardContent className=\"p-6\">
+                <div className=\"flex items-center justify-between\">
                   <div>
-                    <p className="text-sm font-medium text-muted-foreground">{stat.title}</p>
-                    <p className="text-3xl font-bold mt-1">
+                    <p className=\"text-sm font-medium text-muted-foreground\">{stat.title}</p>
+                    <p className=\"text-3xl font-bold mt-1\">
                       {loading ? '-' : stat.value}
                     </p>
                   </div>
@@ -187,89 +200,86 @@ const handleCreateExam = async (formData: ExamFormData) => {
         })}
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Card className="card-elevated border-2 border-[#4F7A6B] hover:border-[#4F7A6B] transition-colors duration-200"> {/* Changed default border to #4F7A6B */}
+      {/* Quick Actions & Recent Exams */}
+      <div className=\"grid gap-6 lg:grid-cols-2\">
+        {/* Quick Actions */}
+        <Card className=\"card-elevated border-2 border-muted hover:border-accent/30 transition-all duration-200 hover:shadow-md\">
           <CardHeader>
-            <CardTitle className="text-lg flex items-center gap-2">
-              <TrendingUp className="w-5 h-5 text-accent" />
+            <CardTitle className=\"text-lg flex items-center gap-2\">
+              <TrendingUp className=\"w-5 h-5 text-accent\" />
               Quick Actions
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-1">
+          <CardContent className=\"space-y-3\">
             <Button 
-              className="w-full justify-start gap-3 h-12 border-2 border-[#2F4A35]/20 hover:border-[#4F7A6B] hover:bg-[#4F7A6B]/10 transition-colors duration-200" 
-              variant="outline"
+              className=\"w-full justify-start gap-3 h-12 border-2 border-accent/20 hover:border-accent/40 hover:bg-accent/5 transition-all duration-200\" 
+              variant=\"outline\"
               onClick={() => setShowCreateModal(true)}
             >
-              <Plus className="w-4 h-4" />
+              <Plus className=\"w-4 h-4 text-accent\" />
               Create New Exam
             </Button>
-            
-            <div className="h-2"></div>
-            
-            <Link href="/students">
-              <Button className="w-full justify-start gap-3 h-12 border-2 border-[#2F4A35]/20 hover:border-[#4F7A6B] hover:bg-[#4F7A6B]/10 transition-colors duration-200" variant="outline">
-                <Users className="w-4 h-4" />
+            <Link href=\"/students\">
+              <Button className=\"w-full justify-start gap-3 h-12 border-2 border-primary/20 hover:border-primary/40 hover:bg-primary/5 transition-all duration-200\" variant=\"outline\">
+                <Users className=\"w-4 h-4 text-primary\" />
                 Manage Students
               </Button>
             </Link>
-            
-            <div className="h-2"></div>
-            
-            <Link href="/exams">
-              <Button className="w-full justify-start gap-3 h-12 border-2 border-[#2F4A35]/20 hover:border-[#4F7A6B] hover:bg-[#4F7A6B]/10 transition-colors duration-200" variant="outline">
-                <FileText className="w-4 h-4" />
+            <Link href=\"/exams\">
+              <Button className=\"w-full justify-start gap-3 h-12 border-2 border-success/20 hover:border-success/40 hover:bg-success/5 transition-all duration-200\" variant=\"outline\">
+                <FileText className=\"w-4 h-4 text-success\" />
                 View All Exams
               </Button>
             </Link>
           </CardContent>
         </Card>
 
-        <Card className="card-elevated border-2 border-[#4F7A6B] hover:border-[#4F7A6B] transition-colors duration-200"> {/* Changed default border to #4F7A6B */}
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Clock className="w-5 h-5 text-accent" />
+        {/* Recent Exams */}
+        <Card className=\"card-elevated border-2 border-muted hover:border-accent/30 transition-all duration-200 hover:shadow-md\">
+          <CardHeader className=\"flex flex-row items-center justify-between\">
+            <CardTitle className=\"text-lg flex items-center gap-2\">
+              <Clock className=\"w-5 h-5 text-accent\" />
               Recent Exams
             </CardTitle>
-            <Link href="/exams">
-              <Button variant="ghost" size="sm" className="border-2 border-transparent hover:border-[#4F7A6B] hover:bg-[#4F7A6B]/10 transition-colors duration-200">View all</Button>
+            <Link href=\"/exams\">
+              <Button variant=\"ghost\" size=\"sm\" className=\"hover:bg-accent/10 hover:text-accent\">View all</Button>
             </Link>
           </CardHeader>
           <CardContent>
             {loading ? (
-              <div className="space-y-3">
+              <div className=\"space-y-3\">
                 {[1, 2, 3].map((i) => (
-                  <div key={i} className="h-16 bg-muted rounded-lg animate-pulse border-2 border-[#4F7A6B]" /> /* Changed to #4F7A6B */
+                  <div key={i} className=\"h-16 bg-muted rounded-lg animate-pulse border-2 border-muted\" />
                 ))}
               </div>
             ) : stats.recentExams.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground border-2 border-dashed border-[#4F7A6B] rounded-lg"> {/* Changed to #4F7A6B */}
-                <FileText className="w-10 h-10 mx-auto mb-2 opacity-50" />
+              <div className=\"text-center py-8 text-muted-foreground border-2 border-dashed border-muted rounded-lg hover:border-accent/30 transition-colors\">
+                <FileText className=\"w-10 h-10 mx-auto mb-2 opacity-50\" />
                 <p>No exams created yet</p>
                 <Button 
-                  variant="link" 
-                  className="mt-2"
+                  variant=\"link\" 
+                  className=\"mt-2 text-accent hover:text-accent/80\"
                   onClick={() => setShowCreateModal(true)}
                 >
                   Create your first exam
                 </Button>
               </div>
             ) : (
-              <div className="space-y-3">
+              <div className=\"space-y-3\">
                 {stats.recentExams.map((exam) => (
                   <Link 
                     key={exam.id} 
                     href={`/exams/${exam.id}`}
-                    className="block p-3 rounded-lg border-2 border-[#4F7A6B] hover:border-[#4F7A6B] hover:bg-[#4F7A6B]/10 transition-colors duration-200" /* Changed default border to #4F7A6B */
+                    className=\"block p-3 rounded-lg border-2 border-muted hover:border-accent/30 hover:bg-accent/5 transition-all duration-200\"
                   >
-                    <div className="flex items-center justify-between">
+                    <div className=\"flex items-center justify-between\">
                       <div>
-                        <p className="font-medium text-foreground">{exam.title}</p>
-                        <p className="text-sm text-muted-foreground">{exam.subject}</p>
+                        <p className=\"font-medium text-foreground\">{exam.title}</p>
+                        <p className=\"text-sm text-muted-foreground\">{exam.subject}</p>
                       </div>
-                      <div className="text-right">
-                        <p className="text-sm font-medium">{exam.num_items} items</p>
-                        <p className="text-xs text-muted-foreground">
+                      <div className=\"text-right\">
+                        <p className=\"text-sm font-medium\">{exam.num_items} items</p>
+                        <p className=\"text-xs text-muted-foreground\">
                           {new Date(exam.created_at).toLocaleDateString()}
                         </p>
                       </div>
@@ -290,4 +300,4 @@ const handleCreateExam = async (formData: ExamFormData) => {
       />
     </div>
   );
-}
+}"
