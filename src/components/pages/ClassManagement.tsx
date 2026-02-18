@@ -107,6 +107,25 @@ export default function ClassManagement() {
     }
   };
 
+  const handleCloseAddDialog = () => {
+    setShowAddDialog(false);
+    // Reset form data when closing dialog
+    setNewClass({
+      class_name: "",
+      course_subject: "",
+      section_block: "",
+      room: "",
+    });
+    setStudents([]);
+    setNewStudent({
+      student_id: "",
+      first_name: "",
+      last_name: "",
+      email: "",
+    });
+    setCurrentTab("basic");
+  };
+
   const handleAddClass = async () => {
     if (
       !newClass.class_name ||
@@ -122,38 +141,49 @@ export default function ClassManagement() {
       return;
     }
 
-    // Show saving state
-    setSaving(true);
+    // Save the class data before resetting
+    const classToAdd: Omit<Class, "id"> = {
+      ...newClass,
+      students: students,
+      created_at: new Date().toISOString(),
+    };
 
+    // Create temporary ID for optimistic update
+    const tempId = `temp_${Date.now()}`;
+    const tempClass: Class = {
+      id: tempId,
+      ...newClass,
+      students: students,
+      created_at: new Date().toISOString(),
+      createdBy: user.id,
+    };
+
+    // Add to UI immediately (optimistic)
+    setClasses([tempClass, ...classes]);
+    setShowAddDialog(false);
+    setNewClass({
+      class_name: "",
+      course_subject: "",
+      section_block: "",
+      room: "",
+    });
+    setStudents([]);
+    setCurrentTab("basic");
+
+    toast.success("Class added successfully");
+
+    // Save to Firebase in background (don't wait for it)
     try {
-      // Save the class data before resetting
-      const classToAdd: Omit<Class, "id"> = {
-        ...newClass,
-        students: students,
-        created_at: new Date().toISOString(),
-      };
-
-      // WAIT for Firestore save to complete before closing dialog
       const newClassDoc = await createClass(classToAdd, user.id);
-      
-      // Add to UI after successful save
-      setClasses([newClassDoc, ...classes]);
-      setShowAddDialog(false);
-      setNewClass({
-        class_name: "",
-        course_subject: "",
-        section_block: "",
-        room: "",
-      });
-      setStudents([]);
-      setCurrentTab("basic");
-
-      toast.success("Class saved successfully");
+      // Replace temp class with real one
+      setClasses((prevClasses) =>
+        prevClasses.map((c) => (c.id === tempId ? newClassDoc : c))
+      );
     } catch (error) {
       console.error("Error saving class to Firebase:", error);
-      toast.error("Failed to save class. Please try again or check your connection.");
-    } finally {
-      setSaving(false);
+      // Remove temp class if save fails
+      setClasses((prevClasses) => prevClasses.filter((c) => c.id !== tempId));
+      toast.error("Failed to save class to database. Please try again.");
     }
   };
 
@@ -546,7 +576,13 @@ export default function ClassManagement() {
       )}
 
       {/* Add Class Dialog */}
-      <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
+      <Dialog open={showAddDialog} onOpenChange={(open) => {
+        if (!open) {
+          handleCloseAddDialog();
+        } else {
+          setShowAddDialog(true);
+        }
+      }}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Add New Class</DialogTitle>
@@ -746,7 +782,7 @@ export default function ClassManagement() {
           <DialogFooter>
             <Button
               variant="outline"
-              onClick={() => setShowAddDialog(false)}
+              onClick={handleCloseAddDialog}
               disabled={saving}
             >
               Cancel

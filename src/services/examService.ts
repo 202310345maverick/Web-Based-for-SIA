@@ -182,7 +182,12 @@ export async function getExamById(examId: string): Promise<Exam | null> {
         data.updatedAt?.toDate?.().toISOString() || new Date().toISOString(),
       className: data.className || undefined,
     };
-  } catch (error) {
+  } catch (error: any) {
+    // Silently handle offline errors - don't throw
+    if (error?.code === 'failed-precondition' || error?.code === 'unavailable' || error?.message?.includes('offline')) {
+      console.warn('Firestore offline - retrying...');
+      return null;
+    }
     console.error("Error fetching exam:", error);
     throw new Error("Failed to fetch exam");
   }

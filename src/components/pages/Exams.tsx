@@ -156,11 +156,40 @@ export default function Exams() {
         return;
       }
 
-      const newExam = await createExam(formData, user.id);
+      // Create temporary ID for optimistic update
+      const tempId = `temp_${Date.now()}`;
+      const tempExam: Exam = {
+        id: tempId,
+        title: formData.name,
+        subject: formData.folder,
+        num_items: formData.totalQuestions,
+        choices_per_item: formData.choicesPerItem || 4,
+        created_at: new Date().toISOString(),
+        answer_keys: [],
+        generated_sheets: [],
+        createdBy: user.id,
+        className: formData.className,
+        examType: formData.examType || 'board',
+      };
 
-      setExams([newExam, ...exams]);
+      // Add to UI immediately (optimistic)
+      setExams([tempExam, ...exams]);
       toast.success(`Exam "${formData.name}" created successfully`);
       setShowCreateModal(false);
+
+      // Save to Firebase in background (don't wait for it)
+      try {
+        const newExam = await createExam(formData, user.id);
+        // Replace temp exam with real one
+        setExams((prevExams) =>
+          prevExams.map((e) => (e.id === tempId ? newExam : e))
+        );
+      } catch (error) {
+        console.error("Error saving exam to Firebase:", error);
+        // Remove temp exam if save fails
+        setExams((prevExams) => prevExams.filter((e) => e.id !== tempId));
+        toast.error("Failed to save exam to database. Please try again.");
+      }
     } catch (error) {
       console.error("Error creating exam:", error);
       toast.error("Failed to create exam");
