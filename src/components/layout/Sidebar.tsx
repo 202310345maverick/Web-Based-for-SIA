@@ -37,7 +37,6 @@ const navItems = [
   { path: '/exams', label: 'Exams', icon: FileText },
   { path: '/classes', label: 'Classes', icon: Users },
   { path: '/results', label: 'Results', icon: BarChart3 },
-  { path: '/services', label: 'Services', icon: Sparkles },
   { path: '/templates', label: 'Templates', icon: FileText },
   { path: '/archive', label: 'Archive', icon: Archive },
   { path: '/settings', label: 'Settings', icon: Settings },

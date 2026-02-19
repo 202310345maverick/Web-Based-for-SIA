@@ -64,6 +64,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (firestoreTimeoutRef.current) clearTimeout(firestoreTimeoutRef.current);
   }, []);
 
+  // OPTIMIZATION 11: Restore session from localStorage on mount
+  useEffect(() => {
+    const restoreSession = () => {
+      try {
+        const savedSession = localStorage.getItem('auth_session');
+        if (savedSession) {
+          const session = JSON.parse(savedSession);
+          setUser(session.user);
+          setSession(session);
+          setUserRole(session.user.role);
+          // Don't set loading to false yet - wait for Firebase verification
+        }
+      } catch (error) {
+        // Silently fail if session data is corrupted
+        console.warn('Could not restore session from localStorage');
+      }
+    };
+
+    restoreSession();
+  }, []);
+
   // Listen to Firebase auth state changes
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
@@ -81,12 +102,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setUser(cachedUser);
             setUserRole(cachedUser.role);
             
-            setSession({
+            const newSession = {
               access_token: 'authenticated',
               expires_in: 3600,
               token_type: 'bearer',
               user: cachedUser,
-            });
+            };
+            setSession(newSession);
+            // OPTIMIZATION 11: Persist session to localStorage
+            localStorage.setItem('auth_session', JSON.stringify(newSession));
           } else {
             // Create basic app user from Firebase data
             const basicAppUser: AppUser = {
@@ -105,12 +129,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setUserRole('instructor');
             userCache.set(firebaseUser.uid, basicAppUser);
             
-            setSession({
+            const newSession = {
               access_token: 'authenticated',
               expires_in: 3600,
               token_type: 'bearer',
               user: basicAppUser,
-            });
+            };
+            setSession(newSession);
+            // OPTIMIZATION 11: Persist session to localStorage
+            localStorage.setItem('auth_session', JSON.stringify(newSession));
           }
           
           // OPTIMIZATION 5: Fetch token with timeout (without AbortController)
@@ -173,10 +200,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   userCache.set(firebaseUser.uid, fullUserData);
                   
                   // Update session with full user data
-                  setSession((prev) => prev ? {
-                    ...prev,
+                  const updatedSession = {
+                    access_token: 'authenticated',
+                    expires_in: 3600,
+                    token_type: 'bearer',
                     user: fullUserData,
-                  } : null);
+                  };
+                  setSession(updatedSession);
+                  // OPTIMIZATION 11: Persist updated session to localStorage
+                  localStorage.setItem('auth_session', JSON.stringify(updatedSession));
                 }
               } catch (error) {
                 // Silently fail - user is already logged in with basic data
@@ -193,6 +225,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setUser(null);
           setSession(null);
           setUserRole(null);
+          // OPTIMIZATION 11: Clear session from localStorage
+          localStorage.removeItem('auth_session');
           clearTimeouts();
         }
       } finally {
@@ -338,6 +372,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setSession(null);
       setUserRole(null);
       setFirebaseUser(null);
+      
+      // OPTIMIZATION 11: Clear session from localStorage
+      localStorage.removeItem('auth_session');
       
       // Clear cache on sign out
       if (firebaseUser?.uid) {
