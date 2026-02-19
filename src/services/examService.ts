@@ -8,9 +8,7 @@ import {
   deleteDoc,
   query,
   where,
-  orderBy,
   serverTimestamp,
-  Timestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
@@ -29,6 +27,8 @@ export interface Exam {
   className?: string;
   examType?: 'board' | 'diagnostic';
   choicePoints?: { [choice: string]: number };
+  isArchived?: boolean;
+  archivedAt?: string;
 }
 
 export interface GeneratedSheet {
@@ -148,10 +148,7 @@ export async function getRecentExams(userId: string, limit: number = 5): Promise
   }
 }
 
-/**
- * Get exam count for a user (lightweight)
- * Uses client-side filtering to avoid composite index requirement
- */
+
 export async function getExamCount(userId: string): Promise<number> {
   try {
     // Fetch all exams without filters to avoid composite index
@@ -179,14 +176,17 @@ export async function getExamCount(userId: string): Promise<number> {
  */
 export async function getExams(userId?: string): Promise<Exam[]> {
   try {
-    // Fetch all exams without filters to avoid composite index requirement
-    const q = query(collection(db, "exams"));
+    // If userId is provided, query with filter to avoid permission issues
+    const q = userId
+      ? query(collection(db, "exams"), where("createdBy", "==", userId))
+      : query(collection(db, "exams"));
+    
     const querySnapshot = await getDocs(q);
     const exams: Exam[] = [];
 
     querySnapshot.forEach((doc) => {
       const data = doc.data();
-      // Filter by userId if provided (client-side)
+      // Filter by userId if provided (additional client-side check)
       if (!userId || data.createdBy === userId) {
         exams.push({
           id: doc.id,
@@ -279,6 +279,73 @@ export async function updateExam(
   } catch (error) {
     console.error("Error updating exam:", error);
     throw new Error("Failed to update exam");
+  }
+}
+
+/**
+ * Archive an exam
+ */
+export async function archiveExam(examId: string): Promise<void> {
+  try {
+    const docRef = doc(db, "exams", examId);
+    await updateDoc(docRef, {
+      isArchived: true,
+      archivedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    console.error("Error archiving exam:", error);
+    throw new Error("Failed to archive exam");
+  }
+}
+
+
+export async function getArchivedExams(userId: string): Promise<Exam[]> {
+  try {
+    // Use where clause to filter by userId and isArchived to minimize data read
+    const q = query(
+      collection(db, "exams"),
+      where("createdBy", "==", userId),
+      where("isArchived", "==", true)
+    );
+    const querySnapshot = await getDocs(q);
+    const exams: Exam[] = [];
+
+    querySnapshot.forEach((doc) => {
+      const data = doc.data();
+      exams.push({
+        id: doc.id,
+        title: data.title,
+        subject: data.subject,
+        num_items: data.num_items,
+        choices_per_item: data.choices_per_item,
+        created_at:
+          data.created_at ||
+          data.createdAt?.toDate?.().toISOString() ||
+          new Date().toISOString(),
+        answer_keys: data.answer_keys || [],
+        generated_sheets: data.generated_sheets || [],
+        createdBy: data.createdBy,
+        updatedAt:
+          data.updatedAt?.toDate?.().toISOString() || new Date().toISOString(),
+        className: data.className || undefined,
+        isArchived: data.isArchived,
+        archivedAt:
+          data.archivedAt?.toDate?.().toISOString() || new Date().toISOString(),
+      });
+    });
+
+    // Sort by archive date
+    exams.sort((a, b) => {
+      const dateA = new Date(a.archivedAt || a.created_at).getTime();
+      const dateB = new Date(b.archivedAt || b.created_at).getTime();
+      return dateB - dateA;
+    });
+
+    return exams;
+  } catch (error: any) {
+    console.error("Error fetching archived exams:", error);
+    return [];
   }
 }
 
