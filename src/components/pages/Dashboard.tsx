@@ -75,7 +75,7 @@ export default function Dashboard() {
       try {
         console.log('Fetching stats for user:', user.id);
         
-        // OPTIMIZATION 1: Single query to get all exam data
+        // OPTIMIZATION 1: Single query to get all exam data with timeout
         const examsRef = collection(db, 'exams');
         const q = query(
           examsRef, 
@@ -84,11 +84,31 @@ export default function Dashboard() {
           limit(10) // Get latest 10 exams
         );
         
-        const querySnapshot = await getDocs(q);
+        let querySnapshot;
+        try {
+          // Add timeout to prevent hanging
+          querySnapshot = await Promise.race([
+            getDocs(q),
+            new Promise((_, reject) => {
+              setTimeout(() => reject(new Error('Query timeout')), 5000);
+            })
+          ]) as any;
+        } catch (queryError: any) {
+          console.warn('Dashboard query failed or timed out:', queryError.message);
+          // Fallback: set empty stats instead of failing
+          setStats({
+            totalExams: 0,
+            totalStudents: 0,
+            totalSheets: 0,
+            recentExams: [],
+          });
+          hasFetched.current = true;
+          return;
+        }
         
         // Calculate all stats from this single query
         const totalExams = querySnapshot.size;
-        const exams = querySnapshot.docs.map(doc => {
+        const exams = querySnapshot.docs.map((doc: any) => {
           const data = doc.data();
           return {
             id: doc.id,
@@ -111,19 +131,24 @@ export default function Dashboard() {
           return sum;
         }, 0);
         
-        // OPTIMIZATION 3: Get student count from a separate lightweight query
-        // But only if needed (not on every render)
+        // OPTIMIZATION 3: Get student count from a separate lightweight query with timeout
         let totalStudents = 0;
         try {
           const studentsRef = collection(db, 'students');
           const studentsQuery = query(
             studentsRef,
-            where('createdBy', '==', user.id)
+            where('created_by', '==', user.id)
           );
-          const studentsSnapshot = await getDocs(studentsQuery);
+          const studentsSnapshot = await Promise.race([
+            getDocs(studentsQuery),
+            new Promise((_, reject) => {
+              setTimeout(() => reject(new Error('Students query timeout')), 3000);
+            })
+          ]) as any;
           totalStudents = studentsSnapshot.size;
         } catch (error) {
-          console.log('Students collection not yet available:', error);
+          console.log('Students collection query failed:', error);
+          totalStudents = 0; // Fallback to 0
         }
         
         console.log('Dashboard data fetched successfully:', {
@@ -151,7 +176,14 @@ export default function Dashboard() {
         
       } catch (error) {
         console.error('Error fetching stats:', error);
-        toast.error('Failed to load dashboard data');
+        // Set empty stats on error instead of showing error toast
+        setStats({
+          totalExams: 0,
+          totalStudents: 0,
+          totalSheets: 0,
+          recentExams: [],
+        });
+        hasFetched.current = true;
       } finally {
         setLoading(false);
       }

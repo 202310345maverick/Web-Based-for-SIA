@@ -46,6 +46,7 @@ import { DataQualityService } from '@/services/dataQualityService';
 import { OfficialRecordService } from '@/services/officialRecordService';
 import { StudentFileUploadService } from '@/services/studentFileUploadService';
 import { DataQualityDisplay } from '@/components/validation/DataQualityDisplay';
+import { createClass, getClasses, deleteClass } from '@/services/classService';
 import { useAuth } from '@/contexts/AuthContext';
 import { 
   Search, 
@@ -115,28 +116,18 @@ export default function StudentClasses() {
 
   useEffect(() => {
     fetchClasses();
-  }, []);
+  }, [user?.id]);
 
   const fetchClasses = async () => {
+    if (!user?.id) {
+      setLoading(false);
+      return;
+    }
+
     try {
-      // TODO: Fetch from Firestore
-      // For now, using mock data
-      const mockClasses: Class[] = [
-        {
-          id: '1',
-          class_name: 'Computer Science 101',
-          course_subject: 'Introduction to Programming',
-          section_block: 'A',
-          room: 'Room 301',
-          
-          students: [
-            { student_id: '2021001', first_name: 'John', last_name: 'Doe', email: 'john.doe@example.com' },
-            { student_id: '2021002', first_name: 'Jane', last_name: 'Smith', email: 'jane.smith@example.com' },
-          ],
-          created_at: new Date().toISOString(),
-        },
-      ];
-      setClasses(mockClasses);
+      console.log('Fetching classes for user:', user.id);
+      const fetchedClasses = await getClasses(user.id);
+      setClasses(fetchedClasses);
     } catch (error) {
       console.error('Error fetching classes:', error);
       toast.error('Failed to load classes');
@@ -151,16 +142,21 @@ export default function StudentClasses() {
       return;
     }
 
+    if (!user?.id) {
+      toast.error('User not authenticated');
+      return;
+    }
+
     try {
-      const classToAdd: Class = {
-        id: Date.now().toString(),
+      const classToAdd: Omit<Class, 'id'> = {
         ...newClass,
         students: students,
         created_at: new Date().toISOString(),
       };
 
-      // TODO: Save to Firestore
-      setClasses([...classes, classToAdd]);
+      // Save to Firestore
+      const savedClass = await createClass(classToAdd, user.id);
+      setClasses([...classes, savedClass]);
       
       setShowAddDialog(false);
       setNewClass({
@@ -172,7 +168,7 @@ export default function StudentClasses() {
       setStudents([]);
       setCurrentTab('basic');
       
-      toast.success('Class added successfully');
+      toast.success('Class added and saved successfully');
     } catch (error) {
       console.error('Error adding class:', error);
       toast.error('Failed to add class');
@@ -183,7 +179,8 @@ export default function StudentClasses() {
     if (!deleteId) return;
 
     try {
-      // TODO: Delete from Firestore
+      // Delete from Firestore
+      await deleteClass(deleteId);
       setClasses(classes.filter(c => c.id !== deleteId));
       setDeleteId(null);
       toast.success('Class deleted successfully');
