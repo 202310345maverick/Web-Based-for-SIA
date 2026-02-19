@@ -2,7 +2,10 @@
  * Student Field Validation Service
  * Validates student entries for required fields: Name, ID, Year, Section
  * Provides detailed error messages for missing or invalid fields
+ * Logs all validation actions for audit trail
  */
+
+import { ValidationActionLogger } from './validationActionLogger';
 
 export interface StudentValidationError {
   rowIndex: number;
@@ -118,6 +121,44 @@ export class StudentFieldValidationService {
       missingFields,
       invalidFields,
     };
+  }
+
+  /**
+   * Validate multiple student records with logging
+   */
+  static async validateBulkRecordsWithLogging(
+    records: StudentRecord[],
+    adminId: string,
+    adminEmail: string
+  ): Promise<{
+    validRecords: StudentRecord[];
+    invalidRecords: Array<{ record: StudentRecord; errors: StudentValidationError[] }>;
+    summary: {
+      total: number;
+      valid: number;
+      invalid: number;
+      missingFieldsByType: Record<string, number>;
+    };
+  }> {
+    const validationResult = this.validateBulkRecords(records);
+    
+    // Log the bulk validation action
+    const errorMap = new Map<number, string[]>();
+    validationResult.invalidRecords.forEach(({ record, errors }) => {
+      const rowIndex = record.rowIndex ?? 0;
+      errorMap.set(rowIndex, errors.map((e) => e.error));
+    });
+
+    await ValidationActionLogger.logBulkFieldValidation(
+      adminId,
+      adminEmail,
+      validationResult.summary.total,
+      validationResult.summary.valid,
+      validationResult.summary.invalid,
+      errorMap
+    );
+
+    return validationResult;
   }
 
   /**
@@ -302,12 +343,13 @@ export class StudentFieldValidationService {
   }
 
   /**
-   * Mark validated records as official
+   * Mark validated records as official with logging
    * Called after successful field validation and data quality check
    */
   static async markValidatedRecordsAsOfficial(
     studentIds: string[],
-    validatedBy: string
+    validatedBy: string,
+    adminEmail?: string
   ): Promise<{ success: number; failed: string[] }> {
     try {
       const { OfficialRecordService } = await import('./officialRecordService');
@@ -315,6 +357,19 @@ export class StudentFieldValidationService {
         studentIds,
         validatedBy
       );
+
+      // Log the bulk official marking
+      if (adminEmail) {
+        await ValidationActionLogger.logMarkAsOfficial(
+          validatedBy,
+          adminEmail,
+          '',
+          'Multiple students',
+          true,
+          studentIds.length
+        );
+      }
+
       return {
         success: result.success,
         failed: result.failed,

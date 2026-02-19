@@ -2,6 +2,7 @@
  * Official Record Service
  * Manages validation status and marks student records as official
  * Ensures only validated students are marked as official in the database
+ * Logs all validation status changes for audit trail
  */
 
 import {
@@ -13,6 +14,7 @@ import {
   getDocs,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { ValidationActionLogger } from './validationActionLogger';
 
 export interface StudentRecord {
   student_id: string;
@@ -34,6 +36,90 @@ export type ValidationStatus = 'official' | 'unvalidated' | 'pending';
 const STUDENTS_COLLECTION = 'students';
 
 export class OfficialRecordService {
+  /**
+   * Mark a single student record as official after validation with logging
+   * @param studentId - Student ID to mark as official
+   * @param validatedBy - Admin/user ID who validated the record
+   * @param validatedByEmail - Admin email for logging
+   * @param studentName - Student name for logging
+   * @returns true if successful, false otherwise
+   */
+  static async markAsOfficialWithLogging(
+    studentId: string,
+    validatedBy: string,
+    validatedByEmail: string,
+    studentName: string
+  ): Promise<boolean> {
+    try {
+      const studentRef = doc(db, STUDENTS_COLLECTION, studentId);
+      await updateDoc(studentRef, {
+        validation_status: 'official',
+        validation_date: new Date().toISOString(),
+        validated_by: validatedBy,
+        updated_at: new Date().toISOString(),
+      });
+
+      // Log the action
+      await ValidationActionLogger.logMarkAsOfficial(
+        validatedBy,
+        validatedByEmail,
+        studentId,
+        studentName,
+        false
+      );
+
+      return true;
+    } catch (error) {
+      console.error(`Failed to mark student ${studentId} as official:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Mark multiple student records as official after batch validation with logging
+   * @param studentIds - Array of student IDs to mark as official
+   * @param validatedBy - Admin/user ID who validated the records
+   * @param validatedByEmail - Admin email for logging
+   * @returns Object with success count and failed IDs
+   */
+  static async markMultipleAsOfficialWithLogging(
+    studentIds: string[],
+    validatedBy: string,
+    validatedByEmail: string
+  ): Promise<{
+    success: number;
+    failed: string[];
+    total: number;
+  }> {
+    const failed: string[] = [];
+    let success = 0;
+
+    for (const studentId of studentIds) {
+      const result = await this.markAsOfficial(studentId, validatedBy);
+      if (result) {
+        success++;
+      } else {
+        failed.push(studentId);
+      }
+    }
+
+    // Log the bulk action
+    await ValidationActionLogger.logMarkAsOfficial(
+      validatedBy,
+      validatedByEmail,
+      '',
+      'Multiple students',
+      true,
+      studentIds.length
+    );
+
+    return {
+      success,
+      failed,
+      total: studentIds.length,
+    };
+  }
+
   /**
    * Mark a single student record as official after validation
    * @param studentId - Student ID to mark as official
@@ -249,6 +335,47 @@ export class OfficialRecordService {
     } catch (error) {
       console.error(`Failed to get validation metadata for ${studentId}:`, error);
       return null;
+    }
+  }
+
+  /**
+   * Reset validation status for a student record with logging (admin only)
+   * @param studentId - Student ID to reset
+   * @param adminId - Admin ID performing the reset
+   * @param adminEmail - Admin email for logging
+   * @param studentName - Student name for logging
+   * @param reason - Reason for reset
+   * @returns true if successful, false otherwise
+   */
+  static async resetValidationStatusWithLogging(
+    studentId: string,
+    adminId: string,
+    adminEmail: string,
+    studentName: string,
+    reason: string
+  ): Promise<boolean> {
+    try {
+      const studentRef = doc(db, STUDENTS_COLLECTION, studentId);
+      await updateDoc(studentRef, {
+        validation_status: 'unvalidated',
+        validation_date: null,
+        validated_by: null,
+        updated_at: new Date().toISOString(),
+      });
+
+      // Log the reset action
+      await ValidationActionLogger.logValidationReset(
+        adminId,
+        adminEmail,
+        [studentId],
+        [studentName],
+        reason
+      );
+
+      return true;
+    } catch (error) {
+      console.error(`Failed to reset validation status for ${studentId}:`, error);
+      return false;
     }
   }
 

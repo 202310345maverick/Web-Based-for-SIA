@@ -2,7 +2,10 @@
  * Data Quality Service
  * Detects and flags duplicates and inconsistent data
  * Provides feedback for data quality issues
+ * Logs all quality check actions for audit trail
  */
+
+import { ValidationActionLogger } from './validationActionLogger';
 
 // Reference lists for valid values
 export const VALID_GRADES = ['1', '2', '3', '4', '5', '6', 'A', 'B', 'C', 'D', 'E', 'F'];
@@ -58,6 +61,57 @@ export interface StudentRecord {
 }
 
 export class DataQualityService {
+  /**
+   * Check entire batch for duplicates and inconsistencies with logging
+   */
+  static async checkDataQualityWithLogging(
+    records: StudentRecord[],
+    adminId: string,
+    adminEmail: string
+  ): Promise<DataQualityResult> {
+    const result = this.checkDataQuality(records);
+
+    // Log the quality check
+    await ValidationActionLogger.logQualityCheck(
+      adminId,
+      adminEmail,
+      records.length,
+      {
+        duplicates: result.summary.duplicateCount,
+        inconsistencies: result.summary.inconsistencyCount,
+        typos: 0, // Calculated separately if needed
+        total: result.totalIssues,
+      },
+      result.isClean
+    );
+
+    // Log duplicate detection if duplicates found
+    if (result.duplicates.length > 0) {
+      const studentIdDupes = result.duplicates
+        .filter((d) => d.type === 'student_id')
+        .map((d) => d.value);
+      const nameDupes = result.duplicates
+        .filter((d) => d.type === 'name_combination')
+        .map((d) => d.value);
+      const emailDupes = result.duplicates
+        .filter((d) => d.type === 'email')
+        .map((d) => d.value);
+
+      await ValidationActionLogger.logDuplicateDetection(
+        adminId,
+        adminEmail,
+        {
+          studentIdDuplicates: studentIdDupes,
+          nameDuplicates: nameDupes,
+          emailDuplicates: emailDupes,
+          total: result.duplicates.length,
+        }
+      );
+    }
+
+    return result;
+  }
+
   /**
    * Check entire batch for duplicates and inconsistencies
    */
