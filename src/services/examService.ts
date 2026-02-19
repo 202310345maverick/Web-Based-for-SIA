@@ -179,14 +179,17 @@ export async function getExamCount(userId: string): Promise<number> {
  */
 export async function getExams(userId?: string): Promise<Exam[]> {
   try {
-    // Fetch all exams without filters to avoid composite index requirement
-    const q = query(collection(db, "exams"));
+    // If userId is provided, query with filter to avoid permission issues
+    const q = userId
+      ? query(collection(db, "exams"), where("createdBy", "==", userId))
+      : query(collection(db, "exams"));
+    
     const querySnapshot = await getDocs(q);
     const exams: Exam[] = [];
 
     querySnapshot.forEach((doc) => {
       const data = doc.data();
-      // Filter by userId if provided (client-side)
+      // Filter by userId if provided (additional client-side check)
       if (!userId || data.createdBy === userId) {
         exams.push({
           id: doc.id,
