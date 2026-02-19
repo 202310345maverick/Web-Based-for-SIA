@@ -300,4 +300,31 @@ export class StudentFieldValidationService {
   static isFieldRequired(fieldName: string): boolean {
     return REQUIRED_FIELDS.includes(fieldName);
   }
+
+  /**
+   * Mark validated records as official
+   * Called after successful field validation and data quality check
+   */
+  static async markValidatedRecordsAsOfficial(
+    studentIds: string[],
+    validatedBy: string
+  ): Promise<{ success: number; failed: string[] }> {
+    try {
+      const { OfficialRecordService } = await import('./officialRecordService');
+      const result = await OfficialRecordService.markMultipleAsOfficial(
+        studentIds,
+        validatedBy
+      );
+      return {
+        success: result.success,
+        failed: result.failed,
+      };
+    } catch (error) {
+      console.error('Failed to mark validated records as official:', error);
+      return {
+        success: 0,
+        failed: studentIds,
+      };
+    }
+  }
 }

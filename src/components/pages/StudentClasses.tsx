@@ -43,7 +43,10 @@ import { StudentIDService } from '@/services/studentIDService';
 import { IDChangeLogger } from '@/services/idChangeLogger';
 import { StudentFieldValidationService } from '@/services/studentFieldValidationService';
 import { DataQualityService } from '@/services/dataQualityService';
+import { OfficialRecordService } from '@/services/officialRecordService';
+import { ValidationGuardService } from '@/services/validationGuardService';
 import { DataQualityDisplay } from '@/components/validation/DataQualityDisplay';
+import { ValidationStatusBadge } from '@/components/validation/OfficialRecordGuard';
 import { useAuth } from '@/contexts/AuthContext';
 import { 
   Search, 
@@ -254,6 +257,17 @@ export default function StudentClasses() {
     };
 
     setStudents([...students, student]);
+    
+    // Mark as official when manually added
+    if (user) {
+      const isOfficial = await OfficialRecordService.markAsOfficial(
+        student.student_id,
+        user.id
+      );
+      if (!isOfficial) {
+        console.warn(`Failed to mark student ${student.student_id} as official`);
+      }
+    }
     
     // Log ID creation
     if (user && selectedClass) {
@@ -474,9 +488,27 @@ export default function StudentClasses() {
       );
     }
 
+    // Mark validated students as official
+    if (user) {
+      const studentIds = importPreview.map((s) => s.student_id);
+      const markResult = await OfficialRecordService.markMultipleAsOfficial(
+        studentIds,
+        user.id
+      );
+      
+      if (markResult.success > 0) {
+        toast.success(
+          `Imported ${importPreview.length} students and marked ${markResult.success} as official records`
+        );
+      } else {
+        toast.warning(`Imported ${importPreview.length} students but failed to mark some as official`);
+      }
+    } else {
+      toast.success(`Imported ${importPreview.length} students`);
+    }
+
     setImportPreview([]);
     setShowImportDialog(false);
-    toast.success(`Imported ${importPreview.length} students`);
   };
 
   const downloadTemplate = () => {
@@ -971,7 +1003,25 @@ export default function StudentClasses() {
                 setImportPreview([]);
                 setShowDataQualityDialog(false);
                 setShowImportDialog(false);
-                toast.success(`Imported ${studentsWithIds.length} students`);
+
+                // Mark validated students as official
+                if (user) {
+                  const studentIds = studentsWithIds.map((s) => s.student_id);
+                  const markResult = await OfficialRecordService.markMultipleAsOfficial(
+                    studentIds,
+                    user.id
+                  );
+                  
+                  if (markResult.success > 0) {
+                    toast.success(
+                      `Imported ${studentsWithIds.length} students and marked ${markResult.success} as official records`
+                    );
+                  } else {
+                    toast.warning(`Imported ${studentsWithIds.length} students but failed to mark some as official`);
+                  }
+                } else {
+                  toast.success(`Imported ${studentsWithIds.length} students`);
+                }
               }}
               allowOverride={dataQualityResult.summary.highSeverityCount === 0}
             />
