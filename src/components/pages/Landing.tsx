@@ -15,8 +15,11 @@ import {
   QrCode,
   Download,
   Shield,
-  Zap,
-  ArrowRight 
+  Sparkles,
+  ArrowRight,
+  BookOpen,
+  Smartphone,
+  BarChart3
 } from 'lucide-react';
 
 export default function Landing() {
@@ -36,7 +39,7 @@ export default function Landing() {
 
   const benefits = [
     {
-      icon: Zap,
+      icon: Sparkles,
       title: 'Speed',
       description: 'Accelerate the grading process from hours to minutes'
     },
@@ -49,6 +52,33 @@ export default function Landing() {
       icon: CheckCircle,
       title: 'Reliability',
       description: 'Unrecognized IDs are automatically flagged to prevent invalid grading'
+    }
+  ];
+
+  const subsystems = [
+    {
+      icon: BookOpen,
+      title: 'Exam & Template Management',
+      description: 'Easily create exams, define answer keys, and generate standardized, printable answer sheets with Student ID bubbles. Track the number of generated exam papers for better exam control and accountability.',
+      features: ['Create exams quickly', 'Define answer keys', 'Generate printable sheets', 'Track exam papers']
+    },
+    {
+      icon: Users,
+      title: 'Student & Identification Management',
+      description: 'Maintain accurate student records by importing data through Excel or CSV files. Each student is identified using a unique Student ID, ensuring reliable identity matching during the scanning process.',
+      features: ['Import Excel/CSV', 'Manage student records', 'Unique Student IDs', 'ID validation']
+    },
+    {
+      icon: Smartphone,
+      title: 'Scanning & Auto-Grading',
+      description: 'Using a mobile application, instructors can scan completed answer sheets. The system reads both Student ID bubbles and answers, compares responses with the official answer key, and instantly computes scores.',
+      features: ['Mobile scanning', 'ID bubble reading', 'Answer comparison', 'Instant scoring']
+    },
+    {
+      icon: BarChart3,
+      title: 'Results, Reporting & Export',
+      description: 'All grades are securely stored in the database and displayed through a faculty dashboard. Export official grade reports in Excel, CSV, or PDF formats, complete with institutional branding.',
+      features: ['Secure storage', 'Faculty dashboard', 'Multi-format export', 'Custom branding']
     }
   ];
 

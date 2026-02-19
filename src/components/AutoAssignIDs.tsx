@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { AlertCircle, CheckCircle2, Zap } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Sparkles } from 'lucide-react';
 import { StudentIDService, StudentIDConfig } from '@/services/studentIDService';
 import { useToast } from '@/hooks/use-toast';
 
@@ -94,7 +94,7 @@ export function AutoAssignIDs({ students, onAssign, onCancel }: AutoAssignIDsPro
     <Card className="w-full max-w-2xl">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <Zap className="w-5 h-5 text-accent" />
+          <Sparkles className="w-5 h-5 text-accent" />
           Auto-Assign Student IDs
         </CardTitle>
         <CardDescription>

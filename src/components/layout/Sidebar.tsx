@@ -15,7 +15,8 @@ import {
   Settings,
   Menu,
   X,
-  AlertTriangle
+  AlertTriangle,
+  Sparkles
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSidebarContext } from '@/contexts/SidebarContext';
@@ -36,7 +37,7 @@ const navItems = [
   { path: '/exams', label: 'Exams', icon: FileText },
   { path: '/classes', label: 'Classes', icon: Users },
   { path: '/results', label: 'Results', icon: BarChart3 },
-  { path: '/services', label: 'Services', icon: Zap },
+  { path: '/services', label: 'Services', icon: Sparkles },
   { path: '/templates', label: 'Templates', icon: FileText },
   { path: '/archive', label: 'Archive', icon: Archive },
   { path: '/settings', label: 'Settings', icon: Settings },
