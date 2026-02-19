@@ -15,7 +15,7 @@ import {
   Settings,
   Menu,
   X,
-  Upload
+  Zap
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSidebarContext } from '@/contexts/SidebarContext';
@@ -36,7 +36,7 @@ const navItems = [
   { path: '/exams', label: 'Exams', icon: FileText },
   { path: '/classes', label: 'Classes', icon: Users },
   { path: '/results', label: 'Results', icon: BarChart3 },
-  { path: '/upload-report', label: 'Upload Report', icon: Upload },
+  { path: '/services', label: 'Services', icon: Zap },
   { path: '/templates', label: 'Templates', icon: FileText },
   { path: '/archive', label: 'Archive', icon: Archive },
   { path: '/settings', label: 'Settings', icon: Settings },
