@@ -40,14 +40,8 @@ import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
 import { StudentIDService } from '@/services/studentIDService';
-import { IDChangeLogger } from '@/services/idChangeLogger';
-import { StudentFieldValidationService } from '@/services/studentFieldValidationService';
-import { DataQualityService } from '@/services/dataQualityService';
-import { OfficialRecordService } from '@/services/officialRecordService';
-import { StudentFileUploadService } from '@/services/studentFileUploadService';
-import { DataQualityDisplay } from '@/components/validation/DataQualityDisplay';
-import { createClass, getClasses, deleteClass } from '@/services/classService';
-import { useAuth } from '@/contexts/AuthContext';
+import { collection, getDocs } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 import { 
   Search, 
   Plus, 
@@ -125,8 +119,31 @@ export default function StudentClasses() {
     }
 
     try {
-      console.log('Fetching classes for user:', user.id);
-      const fetchedClasses = await getClasses(user.id);
+      const snapshot = await getDocs(collection(db, 'classes'));
+      const fetchedClasses: Class[] = snapshot.docs.map((docSnap) => {
+        const data = docSnap.data() as Record<string, any>;
+        const createdAtValue = data.created_at ?? data.createdAt;
+
+        return {
+          id: docSnap.id,
+          class_name: data.class_name ?? '',
+          course_subject: data.course_subject ?? '',
+          section_block: data.section_block ?? '',
+          room: data.room ?? '',
+          students: Array.isArray(data.students) ? data.students : [],
+          created_at:
+            typeof createdAtValue?.toDate === 'function'
+              ? createdAtValue.toDate().toISOString()
+              : typeof createdAtValue === 'string'
+                ? createdAtValue
+                : new Date().toISOString(),
+          schedule_day: data.schedule_day,
+          schedule_time: data.schedule_time,
+          semester: data.semester,
+          school_year: data.school_year,
+        };
+      });
+
       setClasses(fetchedClasses);
     } catch (error) {
       console.error('Error fetching classes:', error);
@@ -515,7 +532,26 @@ export default function StudentClasses() {
   };
 
   const downloadTemplate = () => {
-    StudentFileUploadService.downloadTemplate('xlsx');
+    const currentYear = new Date().getFullYear();
+    const template = [
+      {
+        student_id: '',
+        first_name: 'Juan',
+        last_name: 'Dela Cruz',
+        email: 'juan.delacruz@example.com',
+      },
+      {
+        student_id: `${currentYear}-0001`,
+        first_name: 'Maria',
+        last_name: 'Santos',
+        email: 'maria.santos@example.com',
+      },
+    ];
+
+    const worksheet = XLSX.utils.json_to_sheet(template);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Students');
+    XLSX.writeFile(workbook, 'student_classes_template.xlsx');
   };
 
   const filteredClasses = classes.filter(c =>
