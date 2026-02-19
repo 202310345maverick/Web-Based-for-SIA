@@ -20,7 +20,7 @@ import {
   createExam, 
   type ExamFormData 
 } from '@/services/examService';
-import { collection, query, where, getDocs, limit, orderBy } from 'firebase/firestore';
+import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
 // Define the Exam type
@@ -75,13 +75,11 @@ export default function Dashboard() {
       try {
         console.log('Fetching stats for user:', user.id);
         
-        // OPTIMIZATION 1: Single query to get all exam data with timeout
+        // OPTIMIZATION 1: Simplified query without orderBy to avoid needing composite index
         const examsRef = collection(db, 'exams');
         const q = query(
           examsRef, 
-          where('createdBy', '==', user.id),
-          orderBy('created_at', 'desc'),
-          limit(10) // Get latest 10 exams
+          where('createdBy', '==', user.id)
         );
         
         let querySnapshot;
@@ -118,7 +116,14 @@ export default function Dashboard() {
             created_at: data.created_at,
             generated_sheets: data.generated_sheets || []
           } as Exam;
-        });
+        })
+        // Sort by created_at descending (newest first) and limit to 5
+        .sort((a, b) => {
+          const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+          const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+          return dateB - dateA;
+        })
+        .slice(0, 5);
         
         // OPTIMIZATION 2: Compute total sheets from exam data
         const totalSheets = exams.reduce((sum, exam) => {
@@ -162,7 +167,7 @@ export default function Dashboard() {
           totalExams,
           totalStudents,
           totalSheets,
-          recentExams: exams.slice(0, 5).map(exam => ({
+          recentExams: exams.map(exam => ({
             id: exam.id,
             title: exam.title,
             subject: exam.subject,
