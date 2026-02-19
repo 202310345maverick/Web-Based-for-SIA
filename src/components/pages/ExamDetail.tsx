@@ -30,11 +30,13 @@ export default function ExamDetail() {
   const [generating, setGenerating] = useState(false);
   const [sheetCount, setSheetCount] = useState(1);
   const [totalGenerated, setTotalGenerated] = useState(0);
+  const [isOffline, setIsOffline] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
   
   // Answer key input state
   const [answers, setAnswers] = useState<Record<number, string>>({});
 
-  const fetchExamData = async () => {
+  const fetchExamData = async (isRetry: boolean = false) => {
     if (!id) return;
     
     try {
@@ -42,18 +44,31 @@ export default function ExamDetail() {
       const examData = await getExamById(id);
       
       if (!examData) {
-        toast.error('Exam not found');
-        router.push('/exams');
+        // Only redirect if not offline
+        if (!isOffline) {
+          toast.error('Exam not found');
+          router.push('/exams');
+        }
         return;
       }
       
       setExam(examData);
       setAnswers({});
       setTotalGenerated(0);
-    } catch (error) {
+      setIsOffline(false);
+    } catch (error: any) {
       console.error('Error fetching exam:', error);
-      toast.error('Failed to load exam');
-      router.push('/exams');
+      
+      // Check if it's an offline error
+      if (error?.message?.includes('offline') || error?.code === 'failed-precondition') {
+        setIsOffline(true);
+        if (!isRetry) {
+          toast.warning('You are offline. Some features may be limited.');
+        }
+      } else {
+        toast.error('Failed to load exam');
+        router.push('/exams');
+      }
     } finally {
       setLoading(false);
     }
@@ -107,7 +122,13 @@ export default function ExamDetail() {
   if (loading) {
     return (
       <div className="page-container flex items-center justify-center min-h-[50vh]">
-        <Loader2 className="w-8 h-8 animate-spin text-accent" />
+        <div className="text-center space-y-4">
+          <Loader2 className="w-8 h-8 animate-spin text-accent mx-auto" />
+          <p className="text-muted-foreground">Loading exam...</p>
+          {isOffline && (
+            <p className="text-sm text-warning">You appear to be offline</p>
+          )}
+        </div>
       </div>
     );
   }
@@ -115,7 +136,40 @@ export default function ExamDetail() {
   if (!exam) {
     return (
       <div className="page-container">
-        <p>Exam not found</p>
+        <Card className="max-w-md">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <AlertCircle className="w-5 h-5 text-warning" />
+              Unable to Load Exam
+            </CardTitle>
+            <CardDescription>
+              {isOffline 
+                ? 'You appear to be offline. Check your connection and try again.'
+                : 'The exam could not be found or loaded.'}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Button 
+              onClick={() => {
+                setLoading(true);
+                setRetryCount(retryCount + 1);
+                fetchExamData(true);
+              }}
+              className="w-full"
+            >
+              {isOffline ? 'Retry' : 'Go Back to Exams'}
+            </Button>
+            {!isOffline && (
+              <Button 
+                variant="ghost"
+                onClick={() => router.push('/exams')}
+                className="w-full"
+              >
+                Back to Exams
+              </Button>
+            )}
+          </CardContent>
+        </Card>
       </div>
     );
   }

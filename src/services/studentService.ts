@@ -1,21 +1,14 @@
-/**
- * Student Service - Enforces Student ID as primary key across system
- * Handles all student-related operations with Student ID as the unique identifier
- */
-
 import {
   collection,
   doc,
   setDoc,
   getDoc,
   updateDoc,
-  deleteDoc,
   query,
   where,
   getDocs,
   serverTimestamp,
   writeBatch,
-  Timestamp,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { StudentIDValidationService } from './studentIDValidationService';
@@ -82,6 +75,25 @@ export class StudentService {
     const idValidation = await StudentIDValidationService.validateStudentId(student_id);
     if (!idValidation.isValid) {
       throw new Error(idValidation.error || 'Invalid student ID');
+    }
+
+    // Check if student already exists (prevent duplicates)
+    try {
+      const existingStudent = await this.getStudentById(student_id);
+      if (existingStudent) {
+        throw new Error(
+          `Student ID "${student_id}" already exists in the system. ` +
+          `Existing student: ${existingStudent.first_name} ${existingStudent.last_name} ` +
+          `(created: ${new Date(existingStudent.created_at).toLocaleDateString()})`
+        );
+      }
+    } catch (error) {
+      // Re-throw if it's our custom duplicate error
+      if ((error as Error).message.includes('already exists')) {
+        throw error;
+      }
+      // Log other errors but continue
+      console.error('Error checking for existing student:', error);
     }
 
     const now = new Date().toISOString();

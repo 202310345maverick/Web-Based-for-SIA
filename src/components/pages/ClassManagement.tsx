@@ -107,6 +107,25 @@ export default function ClassManagement() {
     }
   };
 
+  const handleCloseAddDialog = () => {
+    setShowAddDialog(false);
+    // Reset form data when closing dialog
+    setNewClass({
+      class_name: "",
+      course_subject: "",
+      section_block: "",
+      room: "",
+    });
+    setStudents([]);
+    setNewStudent({
+      student_id: "",
+      first_name: "",
+      last_name: "",
+      email: "",
+    });
+    setCurrentTab("basic");
+  };
+
   const handleAddClass = async () => {
     if (
       !newClass.class_name ||
@@ -122,34 +141,49 @@ export default function ClassManagement() {
       return;
     }
 
+    // Save the class data before resetting
+    const classToAdd: Omit<Class, "id"> = {
+      ...newClass,
+      students: students,
+      created_at: new Date().toISOString(),
+    };
+
+    // Create temporary ID for optimistic update
+    const tempId = `temp_${Date.now()}`;
+    const tempClass: Class = {
+      id: tempId,
+      ...newClass,
+      students: students,
+      created_at: new Date().toISOString(),
+      createdBy: user.id,
+    };
+
+    // Add to UI immediately (optimistic)
+    setClasses([tempClass, ...classes]);
+    setShowAddDialog(false);
+    setNewClass({
+      class_name: "",
+      course_subject: "",
+      section_block: "",
+      room: "",
+    });
+    setStudents([]);
+    setCurrentTab("basic");
+
+    toast.success("Class added successfully");
+
+    // Save to Firebase in background (don't wait for it)
     try {
-      setSaving(true);
-
-      const classToAdd: Omit<Class, "id"> = {
-        ...newClass,
-        students: students,
-        created_at: new Date().toISOString(),
-      };
-
       const newClassDoc = await createClass(classToAdd, user.id);
-      setClasses([newClassDoc, ...classes]);
-
-      setShowAddDialog(false);
-      setNewClass({
-        class_name: "",
-        course_subject: "",
-        section_block: "",
-        room: "",
-      });
-      setStudents([]);
-      setCurrentTab("basic");
-
-      toast.success("Class added successfully");
+      // Replace temp class with real one
+      setClasses((prevClasses) =>
+        prevClasses.map((c) => (c.id === tempId ? newClassDoc : c))
+      );
     } catch (error) {
-      console.error("Error adding class:", error);
-      toast.error("Failed to add class");
-    } finally {
-      setSaving(false);
+      console.error("Error saving class to Firebase:", error);
+      // Remove temp class if save fails
+      setClasses((prevClasses) => prevClasses.filter((c) => c.id !== tempId));
+      toast.error("Failed to save class to database. Please try again.");
     }
   };
 
@@ -542,7 +576,13 @@ export default function ClassManagement() {
       )}
 
       {/* Add Class Dialog */}
-      <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
+      <Dialog open={showAddDialog} onOpenChange={(open) => {
+        if (!open) {
+          handleCloseAddDialog();
+        } else {
+          setShowAddDialog(true);
+        }
+      }}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Add New Class</DialogTitle>
@@ -589,8 +629,8 @@ export default function ClassManagement() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="section_block">Section/Block *</Label>
-                  <Input
+                  <Label htmlFor="section_block">Block *</Label>
+                  <select
                     id="section_block"
                     value={newClass.section_block}
                     onChange={(e) =>
@@ -599,8 +639,17 @@ export default function ClassManagement() {
                         section_block: e.target.value,
                       })
                     }
-                    placeholder="e.g., A"
-                  />
+                    className="w-full px-3 py-2 border border-input rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    <option value="">Select a block...</option>
+                    {Array.from({ length: 26 }, (_, i) =>
+                      String.fromCharCode(65 + i)
+                    ).map((letter) => (
+                      <option key={letter} value={letter}>
+                        {letter}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="room">Room</Label>
@@ -733,7 +782,7 @@ export default function ClassManagement() {
           <DialogFooter>
             <Button
               variant="outline"
-              onClick={() => setShowAddDialog(false)}
+              onClick={handleCloseAddDialog}
               disabled={saving}
             >
               Cancel
@@ -804,8 +853,8 @@ export default function ClassManagement() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="edit_section_block">Section/Block *</Label>
-                  <Input
+                  <Label htmlFor="edit_section_block">Block *</Label>
+                  <select
                     id="edit_section_block"
                     value={newClass.section_block}
                     onChange={(e) =>
@@ -814,8 +863,17 @@ export default function ClassManagement() {
                         section_block: e.target.value,
                       })
                     }
-                    placeholder="e.g., A"
-                  />
+                    className="w-full px-3 py-2 border border-input rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    <option value="">Select a block...</option>
+                    {Array.from({ length: 26 }, (_, i) =>
+                      String.fromCharCode(65 + i)
+                    ).map((letter) => (
+                      <option key={letter} value={letter}>
+                        {letter}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="edit_room">Room</Label>

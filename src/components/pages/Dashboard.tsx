@@ -21,6 +21,7 @@ import {
   getExams,
   type ExamFormData 
 } from '@/services/examService';
+import { getClasses } from '@/services/classService';
 
 interface DashboardStats {
   totalExams: number;
@@ -51,15 +52,29 @@ export default function Dashboard() {
     async function fetchStats() {
       try {
         if (!user?.id) {
+          console.log('No user ID, skipping fetch');
           setLoading(false);
           return;
         }
 
-        const exams = await getExams(user.id);
+        console.log('Fetching stats for user:', user.id);
+
+        const [exams, classes] = await Promise.all([
+          getExams(user.id),
+          getClasses(user.id),
+        ]);
+
+        console.log('Fetched exams:', exams.length);
+        console.log('Fetched classes:', classes);
+
+        // Count total students across all classes
+        const totalStudents = classes.reduce((sum, cls) => sum + (cls.students?.length || 0), 0);
         
+        console.log('Total students calculated:', totalStudents);
+
         setStats({
           totalExams: exams.length,
-          totalStudents: 0, 
+          totalStudents: totalStudents,
           totalSheets: exams.reduce((sum, exam) => 
             sum + (exam.generated_sheets?.reduce((s, sheet) => s + (sheet.sheet_count || 0), 0) || 0), 0
           ),
@@ -80,9 +95,9 @@ export default function Dashboard() {
     }
 
     fetchStats();
-  }, [user]);
+  }, [user?.id]);
 
-const handleCreateExam = async (formData: ExamFormData) => {
+  const handleCreateExam = async (formData: ExamFormData) => {
   try {
     if (!user?.id) {
       toast.error('You must be logged in to create an exam');
