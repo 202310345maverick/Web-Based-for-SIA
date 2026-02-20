@@ -105,7 +105,6 @@ export default function Dashboard() {
         }
         
         // Calculate all stats from this single query
-        const totalExams = querySnapshot.size;
         const exams = querySnapshot.docs.map((doc: any) => {
           const data = doc.data();
           return {
@@ -119,14 +118,19 @@ export default function Dashboard() {
           } as Exam;
         })
         // Filter out archived exams (client-side to avoid needing composite index)
-        .filter((exam: any) => !exam.isArchived)
-        // Sort by created_at descending (newest first) and limit to 5
-        .sort((a, b) => {
-          const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
-          const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
-          return dateB - dateA;
-        })
-        .slice(0, 5);
+        .filter((exam: any) => !exam.isArchived);
+        
+        // Count only active exams
+        const totalExams = exams.length;
+        
+        // Get recent exams (sorted and limited to 5)
+        const recentExams = exams
+          .sort((a, b) => {
+            const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+            const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+            return dateB - dateA;
+          })
+          .slice(0, 5);
         
         // OPTIMIZATION 2: Compute total sheets from exam data
         const totalSheets = exams.reduce((sum, exam) => {
@@ -154,7 +158,7 @@ export default function Dashboard() {
           totalExams,
           totalStudents,
           totalSheets,
-          recentExams: exams.map(exam => ({
+          recentExams: recentExams.map(exam => ({
             id: exam.id,
             title: exam.title,
             subject: exam.subject,
