@@ -33,3 +33,4 @@ out/
 .env.production.local
 .vercel
 .env*.local
+firebase.rules

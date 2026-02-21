@@ -12,8 +12,17 @@ interface TemplateData {
 // Load GC logo
 async function loadGCLogo(): Promise<string> {
   try {
-    const response = await fetch('/gc logo.png');
+    console.log('Attempting to fetch logo from: /gclogo.png');
+    const response = await fetch('/gclogo.png');
+    console.log('Fetch response:', response.status, response.statusText);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
     const blob = await response.blob();
+    console.log('Blob loaded, size:', blob.size);
+    
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onloadend = () => resolve(reader.result as string);
@@ -22,6 +31,7 @@ async function loadGCLogo(): Promise<string> {
     });
   } catch (error) {
     console.error('Failed to load GC logo:', error);
+    console.error('Continuing without logo...');
     return '';
   }
 }
@@ -116,161 +126,207 @@ function drawMiniSheet(
   questionsPerSheet: number,
   logoData: string
 ) {
-  const margin = 3; // Reduced margin for less white space
-  const bubbleSize = 3.2; // Larger bubbles
+  const margin = 10; // 10mm margin
+  const bubbleSize = 3.2; // Bubble size
   const markerSize = 4;
   
-  // Alignment markers - BLACK SQUARES
-  doc.setFillColor(0, 0, 0);
-  doc.rect(startX + margin - markerSize/2, startY + margin - markerSize/2, markerSize, markerSize, 'F');
-  doc.rect(startX + width - margin - markerSize/2, startY + margin - markerSize/2, markerSize, markerSize, 'F');
-  doc.rect(startX + margin - markerSize/2, startY + height - margin - markerSize/2, markerSize, markerSize, 'F');
-  doc.rect(startX + width - margin - markerSize/2, startY + height - markerSize/2, markerSize, markerSize, 'F');
+  let currentY = startY + margin + 5; // Top margin
   
-  let currentY = startY + margin + 4; // Reduced top spacing
-  
-  // Add GC Logo if available
+  // Header with logo and text on same line - centered
   if (logoData) {
-    const logoSize = 10; // Bigger logo
-    doc.addImage(logoData, 'PNG', startX + (width - logoSize) / 2, currentY, logoSize, logoSize);
-    currentY += 11;
+    const logoSize = 6;
+    const textWidth = 25; // Approximate width of "Gordon College" text
+    const totalWidth = logoSize + 2 + textWidth; // logo + gap + text
+    const headerStartX = startX + (width - totalWidth) / 2;
+    
+    // Add logo
+    doc.addImage(logoData, 'PNG', headerStartX, currentY - 1, logoSize, logoSize);
+    
+    // Add text next to logo
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    const textX = headerStartX + logoSize + 2;
+    const textY = currentY + 3; // Vertically center with logo
+    doc.text('Gordon College', textX, textY);
+    
+    currentY += logoSize + 3;
+  } else {
+    // Header without logo - centered
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    const centerX = startX + width / 2;
+    doc.text('Gordon College', centerX, currentY, { align: 'center' });
+    currentY += 4;
   }
   
-  // Header
-  doc.setFontSize(9); // Larger font
-  doc.setFont('helvetica', 'bold');
-  doc.text('Gordon College', startX + width / 2, currentY, { align: 'center' });
-  currentY += 3; // Reduced spacing
+  // Save the Y position for top black squares (aligned with Name/Date)
+  const topBlackSquareY = currentY - 2;
   
-  // Name, Date, Class fields - more compact
-  doc.setFontSize(7); // Larger font
+  // Name and Date fields side by side
+  doc.setFontSize(6);
   doc.setFont('helvetica', 'normal');
   
-  const fieldWidth = (width - 2 * margin) / 2 - 1;
+  const fieldStartX = startX + margin + 1;
+  const fieldMidX = startX + width / 2;
+  const fieldEndX = startX + width - margin - 1;
   
-  // Name field
-  doc.text('Name', startX + margin + 1, currentY);
-  doc.rect(startX + margin + 10, currentY - 2.5, fieldWidth - 8, 3);
+  // Name field (left side)
+  doc.text('Name:', fieldStartX, currentY);
+  doc.line(fieldStartX + 8, currentY, fieldMidX - 1, currentY);
   
-  // Date field
-  doc.text('Date', startX + width / 2 + 1, currentY);
-  doc.rect(startX + width / 2 + 8, currentY - 2.5, fieldWidth - 6, 3);
+  // Date field (right side)
+  doc.text('Date:', fieldMidX + 1, currentY);
+  doc.line(fieldMidX + 7, currentY, fieldEndX, currentY);
   
-  currentY += 4; // Reduced spacing
+  currentY += 4;
   
-  // Class and Period
-  doc.text('Class', startX + margin + 1, currentY);
-  doc.rect(startX + margin + 10, currentY - 2.5, fieldWidth - 8, 3);
+  // Student ZipGrade ID section with border
+  const idTopY = currentY - 1;
+  const idPadMini = 2;
+  const idLabelWMini = 6;
+  const idColSpacing = 4.5;
+  const idContentWMini = idLabelWMini + 10 * idColSpacing;
+  const idBorderWMini = idContentWMini + idPadMini * 2;
+  const idBorderXMini = startX + margin;
+  const idContentXMini = idBorderXMini + idPadMini;
+  const idStartX = idContentXMini + idLabelWMini;
   
-  doc.text('Period', startX + width / 2 + 1, currentY);
-  doc.rect(startX + width / 2 + 10, currentY - 2.5, fieldWidth - 8, 3);
-  
-  currentY += 3; // Reduced spacing
-  
-  // Remove Key section to save space
-  
-  // Student ZipGrade ID section
-  doc.setFontSize(6); // Larger font
+  doc.setFontSize(6);
   doc.setFont('helvetica', 'bold');
-  doc.text('Student ZipGrade ID', startX + margin + 1, currentY);
-  currentY += 3; // Space after label
+  doc.text('Student ZipGrade ID', idContentXMini + 1, currentY + 2);
+  currentY += 5;
   
   // Draw input boxes for writing Student ID
-  const idStartX = startX + margin + 7; // More space from edge
-  const idColSpacing = 4.5; // More spacing between columns
-  const boxWidth = 4; // Width of each box
-  const boxHeight = 4; // Height of box
+  const idBoxWidth = 4;
+  const idBoxHeight = 4;
   
   doc.setFont('helvetica', 'normal');
   for (let i = 0; i < 10; i++) {
-    const boxX = idStartX + i * idColSpacing - boxWidth / 2;
-    doc.rect(boxX, currentY, boxWidth, boxHeight); // Draw box for writing
+    const idBoxX = idStartX + i * idColSpacing - idBoxWidth / 2;
+    doc.rect(idBoxX, currentY, idBoxWidth, idBoxHeight);
   }
   
-  currentY += boxHeight + 2; // Space after boxes
+  currentY += idBoxHeight + 2;
   
-  const idRowSpacing = 3.5; // More spacing between rows
-  const rowLabels = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0']; // Order: 1-9, then 0
+  const idRowSpacing = 3.5;
+  const rowLabels = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
   
-  doc.setFontSize(6); // Larger font for numbers
+  doc.setFontSize(6);
   
-  // Draw 10 columns for ID - circles with better spacing
+  // Draw 10 columns for ID
   for (let col = 0; col < 10; col++) {
     const x = idStartX + col * idColSpacing;
     
-    // Draw 10 rows (1-9, 0)
     for (let row = 0; row < 10; row++) {
       const y = currentY + row * idRowSpacing;
       
-      // Row label on the left side
       if (col === 0) {
         doc.setFont('helvetica', 'bold');
-        doc.text(rowLabels[row], startX + margin + 1, y + 1); // Left-aligned row numbers
+        doc.text(rowLabels[row], idContentXMini + 1, y + 1);
       }
       
       drawBubble(doc, x, y, bubbleSize);
     }
   }
   
-  currentY += 10 * idRowSpacing + 4; // More spacing after ID section
+  const idBottomYMini = currentY + 10 * idRowSpacing + 1;
+  
+  // Draw border around ID section
+  doc.setLineWidth(0.4);
+  doc.rect(idBorderXMini, idTopY, idBorderWMini, idBottomYMini - idTopY + 1);
+  doc.setLineWidth(0.2);
+  
+  currentY = idBottomYMini + 3;
   
   // Answer section
   const choices = ['A', 'B', 'C', 'D', 'E'].slice(0, template.choicesPerQuestion);
-  const answersPerColumn = questionsPerSheet === 20 ? 10 : 25;
-  const numColumns = Math.ceil(questionsPerSheet / answersPerColumn);
-  const columnWidth = (width - 2 * margin) / numColumns;
+  const bubbleSpacing = 4.8;
+  const ansRowH = 4.5;
+  const numW = 10; // space for question numbers before bubbles
   
-  doc.setFontSize(7); // Larger font for answer section
-  doc.setFont('helvetica', 'bold');
+  let maxQY = currentY; // Track the maximum Y position for black squares
   
-  for (let col = 0; col < numColumns; col++) {
-    const startQ = col * answersPerColumn + 1;
-    const endQ = Math.min((col + 1) * answersPerColumn, questionsPerSheet);
-    const colX = startX + margin + col * columnWidth + 2; // Adjust position
+  // Helper: draw a question block for mini sheets
+  function drawMiniQBlock(bx: number, by: number, startQ: number, endQ: number) {
+    let qY = by;
     
-    let qY = currentY;
-    
-    // Column header (A B C D E) - perfectly aligned with bubbles
-    const bubbleSpacing = 5; // More spacing between bubbles
-    const headerOffset = 6; // Starting offset for first bubble
+    // Header row: ■ A B C D (E)
+    doc.setFontSize(6.5);
     doc.setFont('helvetica', 'bold');
+    doc.setFillColor(0, 0, 0);
+    doc.rect(bx + 1.5, qY, 2, 2, 'F');
     for (let i = 0; i < choices.length; i++) {
-      const letterX = colX + headerOffset + i * bubbleSpacing;
-      // Center the letter above the bubble
-      doc.text(choices[i], letterX, qY - 2, { align: 'center' }); // More space between header and bubbles
+      doc.text(choices[i], bx + numW + i * bubbleSpacing, qY + 1.5, { align: 'center' });
     }
+    qY += 4;
     
-    qY += 4; // Add space after header before first question
-    
+    // Question rows
     for (let q = startQ; q <= endQ; q++) {
-      // Add black square indicator for questions 1, 11, 21, 31, etc. (every 10th)
-      const indicatorSize = 2; // Adjusted indicator size
-      if (q % 10 === 1) {
-        doc.setFillColor(0, 0, 0);
-        doc.rect(colX - 2.5, qY - 1, indicatorSize, indicatorSize, 'F'); // Better aligned
-      }
-      
-      // Question number
+      doc.setFontSize(6.5);
       doc.setFont('helvetica', 'bold');
-      const qNumText = q.toString();
-      doc.text(qNumText, colX + (q < 10 ? 1 : 0), qY + 0.5); // Vertically centered with bubbles
-      
-      // Answer bubbles - circles positioned to match letters
+      doc.text(q.toString(), bx + numW - 3, qY + 1, { align: 'right' });
       doc.setFont('helvetica', 'normal');
       for (let i = 0; i < choices.length; i++) {
-        const bubbleX = colX + headerOffset + i * bubbleSpacing;
-        drawBubble(doc, bubbleX, qY, bubbleSize);
+        drawBubble(doc, bx + numW + i * bubbleSpacing, qY, bubbleSize);
       }
-      
-      qY += 4.5; // More vertical spacing between questions
+      qY += ansRowH;
+    }
+    return qY;
+  }
+  
+  if (questionsPerSheet === 50) {
+    // For 50 questions: 2 cols
+    // Col 0: Q1-10, Q11-20, Q21-30
+    // Col 1: Q31-40, Q41-50
+    const blocks = [
+      { startQ: 1, endQ: 10, col: 0, row: 0 },
+      { startQ: 11, endQ: 20, col: 0, row: 1 },
+      { startQ: 21, endQ: 30, col: 0, row: 2 },
+      { startQ: 31, endQ: 40, col: 1, row: 0 },
+      { startQ: 41, endQ: 50, col: 1, row: 1 },
+    ];
+    
+    const colWidth = (width - 2 * margin) / 2;
+    const blockVGap = 10 * ansRowH + 7;
+    
+    blocks.forEach(block => {
+      const bx = startX + margin + block.col * colWidth;
+      const by = currentY + block.row * blockVGap;
+      const endY = drawMiniQBlock(bx, by, block.startQ, block.endQ);
+      if (endY > maxQY) maxQY = endY;
+    });
+  } else {
+    // For 20 questions: 2 columns of 10 each
+    const colWidth = (width - 2 * margin) / 2;
+    
+    for (let col = 0; col < 2; col++) {
+      const startQ = col * 10 + 1;
+      const endQ = Math.min((col + 1) * 10, questionsPerSheet);
+      const bx = startX + margin + col * colWidth;
+      const endY = drawMiniQBlock(bx, currentY, startQ, endQ);
+      if (endY > maxQY) maxQY = endY;
     }
   }
+  
+  // Draw alignment markers - BLACK SQUARES - aligned with content
+  doc.setFillColor(0, 0, 0);
+  const inset = 5; // Distance from edge
+  const bottomBlackSquareY = maxQY + 2; // Aligned with bottom of content
+  
+  // Top-left corner (aligned with Name/Date line)
+  doc.rect(startX + inset, topBlackSquareY, markerSize, markerSize, 'F');
+  // Top-right corner (aligned with Name/Date line)
+  doc.rect(startX + width - markerSize - inset, topBlackSquareY, markerSize, markerSize, 'F');
+  // Bottom-left corner (aligned with bottom numbers)
+  doc.rect(startX + inset, bottomBlackSquareY, markerSize, markerSize, 'F');
+  // Bottom-right corner (aligned with bottom numbers)
+  doc.rect(startX + width - markerSize - inset, bottomBlackSquareY, markerSize, markerSize, 'F');
   
   // Border around sheet
   doc.rect(startX, startY, width, height);
 }
 
-// Draw full page sheet (for 100 questions)
+// Draw full page sheet (for 100 questions) - ZipGrade style
 function drawFullSheet(
   doc: jsPDF,
   startX: number,
@@ -280,156 +336,189 @@ function drawFullSheet(
   template: TemplateData,
   logoData: string
 ) {
-  const margin = 6; // Reduced margin
-  const bubbleSize = 4; // Larger bubbles
+  // A4 = 210 x 297mm, usable ~190 x 277mm
+  const margin = 10;
   const markerSize = 7;
-  
-  // Alignment markers - BLACK SQUARES
-  doc.setFillColor(0, 0, 0);
-  doc.rect(startX + margin - markerSize/2, startY + margin - markerSize/2, markerSize, markerSize, 'F');
-  doc.rect(startX + width - margin - markerSize/2, startY + margin - markerSize/2, markerSize, markerSize, 'F');
-  doc.rect(startX + margin - markerSize/2, startY + height - margin - markerSize/2, markerSize, markerSize, 'F');
-  doc.rect(startX + width - margin - markerSize/2, startY + height - margin - markerSize/2, markerSize, markerSize, 'F');
-  
-  let currentY = startY + margin + 6; // Reduced spacing
-  
-  // Add GC Logo if available
-  if (logoData) {
-    const logoSize = 18; // Larger logo
-    doc.addImage(logoData, 'PNG', startX + (width - logoSize) / 2, currentY, logoSize, logoSize);
-    currentY += 20;
-  }
-  
-  // Header
-  doc.setFontSize(16); // Larger font
-  doc.setFont('helvetica', 'bold');
-  doc.text('Gordon College', startX + width / 2, currentY, { align: 'center' });
-  currentY += 6; // Reduced spacing
-  
-  // Name and Date fields
-  doc.setFontSize(10); // Larger font
-  doc.setFont('helvetica', 'normal');
-  
-  const fieldY = currentY;
-  doc.text('Name', startX + margin + 2, fieldY);
-  doc.line(startX + margin + 18, fieldY, startX + width / 2 - 5, fieldY);
-  
-  doc.text('Date', startX + width / 2 + 5, fieldY);
-  doc.line(startX + width / 2 + 18, fieldY, startX + width - margin - 2, fieldY);
-  
-  currentY += 5; // Reduced spacing
-  
-  // Class and Period
-  doc.text('Class', startX + margin + 2, currentY);
-  doc.line(startX + margin + 18, currentY, startX + width / 2 - 5, currentY);
-  
-  doc.text('Period', startX + width / 2 + 5, currentY);
-  doc.line(startX + width / 2 + 20, currentY, startX + width - margin - 2, currentY);
-  
-  currentY += 6; // Reduced spacing
-  
-  // Student ID section
-  doc.setFontSize(10); // Larger font
-  doc.setFont('helvetica', 'bold');
-  doc.text('Student ZipGrade ID', startX + margin + 2, currentY);
-  currentY += 4; // Space after label
-  
-  // Draw input boxes for writing Student ID
-  const idStartX = startX + margin + 18; // More space from edge
-  const idColSpacing = 6; // More spacing between columns
-  const boxWidth = 5.5; // Width of each box
-  const boxHeight = 6; // Height of box
-  
-  doc.setFont('helvetica', 'normal');
-  for (let i = 0; i < 10; i++) {
-    const boxX = idStartX + i * idColSpacing - boxWidth / 2;
-    doc.rect(boxX, currentY, boxWidth, boxHeight); // Draw box for writing
-  }
-  
-  currentY += boxHeight + 3; // Space after boxes
-  
-  const idRowSpacing = 5.2; // More spacing between rows
-  const rowLabels = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0']; // Order: 1-9, then 0
-  
-  doc.setFontSize(9); // Larger font for numbers
-  
-  // Draw 10 columns for ID - circles with better spacing
-  for (let col = 0; col < 10; col++) {
-    const x = idStartX + col * idColSpacing;
-    
-    // Draw 10 rows (1-9, 0)
-    for (let row = 0; row < 10; row++) {
-      const y = currentY + row * idRowSpacing;
-      
-      // Row label on the left side
-      if (col === 0) {
-        doc.setFont('helvetica', 'bold');
-        doc.text(rowLabels[row], startX + margin + 8, y + 1.5); // Left-aligned row numbers
-      }
-      
-      drawBubble(doc, x, y, bubbleSize);
-    }
-  }
-  
-  currentY += 10 * idRowSpacing + 5; // More spacing after ID
-  
-  // Answer section - 4 columns of 25 questions each
-  const choices = ['A', 'B', 'C', 'D', 'E'].slice(0, template.choicesPerQuestion);
-  const questionsPerColumn = 25;
-  const numColumns = 4;
-  const columnWidth = (width - 2 * margin) / numColumns;
-  
-  doc.setFontSize(9); // Larger font
-  
-  for (let col = 0; col < numColumns; col++) {
-    const startQ = col * questionsPerColumn + 1;
-    const endQ = Math.min((col + 1) * questionsPerColumn, 100);
-    const colX = startX + margin + col * columnWidth + 3;
-    
-    let qY = currentY;
-    
-    // Column header - perfectly aligned with bubbles
+  const inset = 3;
+  const numChoices = template.choicesPerQuestion;
+  const choices = ['A', 'B', 'C', 'D', 'E'].slice(0, numChoices);
+
+  // Answer bubble settings
+  const bubbleSize = 3.8;
+  const bubbleGap = 5.0;   // center-to-center between A, B, C, D, E
+  const rowH = 4.8;        // vertical row spacing
+
+  // ID bubble settings (smaller/tighter)
+  const idBubbleSize = 3.5;
+  const idColGap = 4.5;    // center-to-center between ID columns
+  const idRowH = 4.8;
+
+  let currentY = startY + margin + 2;
+  const lx = startX + margin;
+  const rx = startX + width - margin;
+  const usableW = rx - lx; // ~190mm
+
+  // ── Helper: draw a question block. Returns Y after last row ──
+  function drawQBlock(bx: number, by: number, startQ: number, endQ: number) {
+    const numW = 12; // space for number text (enough for 3 digits + gap)
+    let qY = by;
+
+    // Header row: ■ A B C D (E)
+    doc.setFontSize(7);
     doc.setFont('helvetica', 'bold');
-    const bubbleSpacing = 6; // More spacing between bubbles
-    const headerOffset = 10; // Starting offset for first bubble
+    doc.setFillColor(0, 0, 0);
+    doc.rect(bx + 2, qY, 2.5, 2.5, 'F');
     for (let i = 0; i < choices.length; i++) {
-      const letterX = colX + headerOffset + i * bubbleSpacing;
-      // Center the letter above the bubble
-      doc.text(choices[i], letterX, qY - 3, { align: 'center' }); // More space between header and bubbles
+      doc.text(choices[i], bx + numW + i * bubbleGap, qY + 2, { align: 'center' });
     }
-    
-    qY += 5; // Add space after header before first question
-    
+    qY += 4.5;
+
+    // Question rows
     for (let q = startQ; q <= endQ; q++) {
-      // Add black square indicator for questions 1, 11, 21, 31, etc. (every 10th)
-      const indicatorSize = 2.5; // Adjusted indicator size
-      if (q % 10 === 1) {
-        doc.setFillColor(0, 0, 0);
-        doc.rect(colX - 3, qY - 1.2, indicatorSize, indicatorSize, 'F'); // Better aligned
-      }
-      
+      doc.setFontSize(7);
       doc.setFont('helvetica', 'bold');
-      const qNumText = q.toString();
-      doc.text(qNumText, colX + (q < 10 ? 2 : 0), qY + 1); // Vertically centered with bubbles
-      
-      // Answer bubbles - larger circles with better alignment
+      doc.text(q.toString(), bx + numW - 4, qY + 1.2, { align: 'right' });
       doc.setFont('helvetica', 'normal');
       for (let i = 0; i < choices.length; i++) {
-        const bubbleX = colX + headerOffset + i * bubbleSpacing;
-        drawBubble(doc, bubbleX, qY, bubbleSize);
+        drawBubble(doc, bx + numW + i * bubbleGap, qY, bubbleSize);
       }
-      
-      qY += 5.5; // More vertical spacing between questions
+      qY += rowH;
+    }
+    return qY;
+  }
+
+  // Block width = numW(12) + bubbles span
+  const qBlockW = 12 + (numChoices - 1) * bubbleGap + bubbleSize;
+
+  // ── CORNER MARKERS (top) ──
+  doc.setFillColor(0, 0, 0);
+  doc.rect(startX + inset, startY + inset, markerSize, markerSize, 'F');
+  doc.rect(startX + width - markerSize - inset, startY + inset, markerSize, markerSize, 'F');
+
+  // ── HEADER ──
+  if (logoData) {
+    const logoSize = 12;
+    const hx = startX + (width - 63) / 2;
+    doc.addImage(logoData, 'PNG', hx, currentY - 2, logoSize, logoSize);
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Gordon College', hx + logoSize + 3, currentY + 6);
+    currentY += logoSize + 4;
+  } else {
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Gordon College', startX + width / 2, currentY + 4, { align: 'center' });
+    currentY += 10;
+  }
+
+  // ── FIELDS: Name ___ Date ___ ──
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'bold');
+  const nameEnd = lx + usableW * 0.62;
+  doc.text('Name:', lx, currentY);
+  doc.line(lx + 13, currentY, nameEnd, currentY);
+  doc.text('Date:', nameEnd + 4, currentY);
+  doc.line(nameEnd + 16, currentY, rx, currentY);
+  currentY += 5;
+
+  // ════════════════════════════════════════════
+  // TOP SECTION: [ID box] [Q41-50] [Q71-80]
+  // ════════════════════════════════════════════
+
+  // ID grid: 8mm labels + 10 cols × 4.2mm = 50mm content + 4mm padding = 54mm border
+  const idLabelW = 8;
+  const idPad = 3;
+  const idContentW = idLabelW + 10 * idColGap;
+  const idBorderW = idContentW + idPad * 2;
+
+  // Layout: ID box starts at lx, Q blocks fill remaining space evenly
+  const idBorderX = lx;
+  const idContentX = idBorderX + idPad;
+  const idStartX = idContentX + idLabelW;
+
+  // Position Q41-50 and Q71-80 in remaining space
+  const afterIdX = idBorderX + idBorderW;
+  const remainW = rx - afterIdX;
+  const topGap = (remainW - 2 * qBlockW) / 2; // center the 2 blocks in remaining space
+  const b41x = afterIdX + topGap / 2;
+  const b71x = b41x + qBlockW + topGap;
+
+  // ── STUDENT ZIPGRADE ID ──
+  const idTopY = currentY;
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Student ZipGrade ID', idContentX + 1, currentY + 3.5);
+  currentY += 7;
+
+  // ID input boxes
+  const idBoxW = 4.5;
+  const idBoxH = 5;
+  doc.setFont('helvetica', 'normal');
+  for (let i = 0; i < 10; i++) {
+    doc.rect(idStartX + i * idColGap - idBoxW / 2, currentY, idBoxW, idBoxH);
+  }
+  currentY += idBoxH + 3;
+
+  // ID bubble grid
+  const idBubbleY = currentY;
+  const rowLabels = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
+  doc.setFontSize(7);
+  for (let row = 0; row < 10; row++) {
+    const y = currentY + row * idRowH;
+    doc.setFont('helvetica', 'bold');
+    doc.text(rowLabels[row], idContentX + 2, y + 1.2);
+    doc.setFont('helvetica', 'normal');
+    for (let col = 0; col < 10; col++) {
+      drawBubble(doc, idStartX + col * idColGap, y, idBubbleSize);
     }
   }
-  
+
+  // ID border
+  const idBottomY = currentY + 10 * idRowH + 2;
+  doc.setLineWidth(0.4);
+  doc.rect(idBorderX, idTopY - 1, idBorderW, idBottomY - idTopY + 2);
+  doc.setLineWidth(0.2);
+
+  // ── Q41-50 and Q71-80 aligned to ID bubble rows ──
+  drawQBlock(b41x, idBubbleY, 41, 50);
+  drawQBlock(b71x, idBubbleY, 71, 80);
+
+  currentY = idBottomY + 4;
+
+  // ════════════════════════════════════════════
+  // BOTTOM: 4 cols × 2 rows
+  // ════════════════════════════════════════════
+  const totalGridW = 4 * qBlockW;
+  const colGap = (usableW - totalGridW) / 5;
+  const blockVGap = 10 * rowH + 8;
+
+  const gridBlocks = [
+    { startQ: 1, endQ: 10, col: 0, row: 0 },
+    { startQ: 21, endQ: 30, col: 1, row: 0 },
+    { startQ: 51, endQ: 60, col: 2, row: 0 },
+    { startQ: 81, endQ: 90, col: 3, row: 0 },
+    { startQ: 11, endQ: 20, col: 0, row: 1 },
+    { startQ: 31, endQ: 40, col: 1, row: 1 },
+    { startQ: 61, endQ: 70, col: 2, row: 1 },
+    { startQ: 91, endQ: 100, col: 3, row: 1 },
+  ];
+
+  let maxQY = currentY;
+  gridBlocks.forEach(block => {
+    const bx = lx + colGap + block.col * (qBlockW + colGap);
+    const by = currentY + block.row * blockVGap;
+    const endY = drawQBlock(bx, by, block.startQ, block.endQ);
+    if (endY > maxQY) maxQY = endY;
+  });
+
+  // ── CORNER MARKERS (bottom) ──
+  doc.setFillColor(0, 0, 0);
+  const bmY = maxQY + 3;
+  doc.rect(startX + inset, bmY, markerSize, markerSize, 'F');
+  doc.rect(startX + width - markerSize - inset, bmY, markerSize, markerSize, 'F');
+
   // Footer
   doc.setFontSize(6);
   doc.setFont('helvetica', 'italic');
-  doc.text(
-    'Do not fold, staple, or tear this answer sheet.',
-    startX + width / 2,
-    startY + height - 5,
-    { align: 'center' }
-  );
+  doc.text('Do not fold, staple, or tear this answer sheet.', startX + width / 2, startY + height - 5, { align: 'center' });
 }
