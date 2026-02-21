@@ -41,7 +41,7 @@ import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
 import { StudentIDService } from '@/services/studentIDService';
 import { useAuth } from '@/contexts/AuthContext';
-import { createClass, deleteClass } from '@/services/classService';
+import { createClass, deleteClass, updateClass } from '@/services/classService';
 import { OfficialRecordService } from '@/services/officialRecordService';
 import { IDChangeLogger } from '@/services/idChangeLogger';
 import { StudentFieldValidationService } from '@/services/studentFieldValidationService';
@@ -51,13 +51,13 @@ import { db } from '@/lib/firebase';
 import { 
   Search, 
   Plus, 
-  Trash2, 
   Loader2,
   GraduationCap,
   Upload,
   Download,
   AlertCircle,
-  X
+  X,
+  Archive
 } from 'lucide-react';
 
 interface Student {
@@ -79,6 +79,7 @@ interface Class {
   schedule_time?: string;
   semester?: string;
   school_year?: string;
+  isArchived?: boolean;
 }
 
 export default function StudentClasses() {
@@ -96,6 +97,7 @@ export default function StudentClasses() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [archiveId, setArchiveId] = useState<string | null>(null);
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showViewDialog, setShowViewDialog] = useState(false);
   const [selectedClass, setSelectedClass] = useState<Class | null>(null);
@@ -155,8 +157,9 @@ export default function StudentClasses() {
           schedule_time: data.schedule_time,
           semester: data.semester,
           school_year: data.school_year,
+          isArchived: data.isArchived || false,
         };
-      });
+      }).filter(classItem => !classItem.isArchived); // Filter out archived classes
 
       setClasses(fetchedClasses);
     } catch (error) {
@@ -195,8 +198,24 @@ export default function StudentClasses() {
       toast.warning('Room number is required');
       return;
     }
-    if (!/^\d+$/.test(newClass.room.trim())) {
-      toast.warning('Room must contain numbers only');
+    if (!/^[a-zA-Z0-9]+$/.test(newClass.room.trim())) {
+      toast.warning('Room must contain letters and numbers only (no spaces or symbols)');
+      return;
+    }
+
+    // Validation for Students - at least one student required for new classes
+    if (!editingClassId && students.length === 0) {
+      toast.error('At least one student is required to create a class');
+      return;
+    }
+
+    // Validate all students have proper IDs
+    const invalidStudents = students.filter(student => {
+      return !student.student_id || !/^\d{9}$/.test(student.student_id) || !student.student_id.startsWith('20');
+    });
+    
+    if (invalidStudents.length > 0) {
+      toast.error(`${invalidStudents.length} student(s) have invalid Student IDs. Please fix before creating class.`);
       return;
     }
 
@@ -248,11 +267,11 @@ export default function StudentClasses() {
         toast.success('Class updated successfully');
       } else {
         // CREATE new class
-        console.log('🔍 User object:', user);
-        console.log('🔍 User.instructorId:', user?.instructorId);
+        console.log('User object:', user);
+        console.log('User.instructorId:', user?.instructorId);
         
         if (!user?.instructorId) {
-          toast.error('⚠️ Instructor ID not found. Please log out and log back in, or contact support.');
+          toast.error('Instructor ID not found. Please log out and log back in, or contact support.');
           return;
         }
         
@@ -263,9 +282,9 @@ export default function StudentClasses() {
         };
 
         // Save to Firestore with instructorId
-        console.log('📚 Creating class with instructorId:', user.instructorId);
+        console.log('Creating class with instructorId:', user.instructorId);
         const savedClass = await createClass(classToAdd, user.id, user.instructorId);
-        console.log('✅ Class saved:', savedClass);
+        console.log('Class saved:', savedClass);
         
         // CRITICAL: Also save individual student records to the students collection
         if (students.length > 0) {
@@ -322,6 +341,20 @@ export default function StudentClasses() {
     } catch (error) {
       console.error('Error deleting class:', error);
       toast.error('Failed to delete class');
+    }
+  };
+
+  const handleArchive = async () => {
+    if (!archiveId) return;
+
+    try {
+      await updateClass(archiveId, { isArchived: true });
+      setClasses(classes.filter(c => c.id !== archiveId));
+      setArchiveId(null);
+      toast.success('Class archived successfully');
+    } catch (error) {
+      console.error('Error archiving class:', error);
+      toast.error('Failed to archive class');
     }
   };
 
@@ -868,17 +901,21 @@ export default function StudentClasses() {
                       </p>
                     </div>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="text-destructive hover:text-destructive"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setDeleteId(classItem.id);
-                    }}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-amber-600 hover:text-amber-700 border-amber-200 hover:border-amber-300"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setArchiveId(classItem.id);
+                      }}
+                      title="Archive this class"
+                    >
+                      <Archive className="w-4 h-4 mr-2" />
+                      Archive
+                    </Button>
+                  </div>
                 </div>
                 
                 <div className="mt-4 grid grid-cols-3 gap-4">
@@ -897,7 +934,7 @@ export default function StudentClasses() {
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-1">Average Score</p>
-                    <p className="text-sm font-medium">84%</p>
+                    <p className="text-sm font-medium text-muted-foreground">N/A</p>
                   </div>
                 </div>
                 
@@ -918,64 +955,81 @@ export default function StudentClasses() {
 
       {/* Add Class Dialog */}
       <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Add New Class</DialogTitle>
-            <DialogDescription>
-              Create a new class and add students to the roster
+        <DialogContent className="max-w-4xl max-h-[95vh] overflow-y-auto">
+          <DialogHeader className="pb-6">
+            <DialogTitle className="text-2xl font-bold">Create New Class</DialogTitle>
+            <DialogDescription className="text-base">
+              Follow the steps below to create a new class. All required fields are marked with *.
+              You must add at least one valid student to complete the class creation.
             </DialogDescription>
           </DialogHeader>
 
           <Tabs value={currentTab} onValueChange={setCurrentTab} className="w-full">
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="basic">Class Information</TabsTrigger>
-              <TabsTrigger value="students">Student Roster</TabsTrigger>
+            <TabsList className="grid w-full grid-cols-2 mb-6">
+              <TabsTrigger value="basic" className="flex items-center gap-2">
+                Class Information
+              </TabsTrigger>
+              <TabsTrigger value="students" className="flex items-center gap-2">
+                Student Roster
+                {students.length > 0 && (
+                  <span className="ml-1 text-xs bg-green-500 text-white px-2 py-1 rounded-full">
+                    {students.length}
+                  </span>
+                )}
+              </TabsTrigger>
             </TabsList>
 
-            <TabsContent value="basic" className="space-y-4 mt-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="class_name">Class Name *</Label>
+            <TabsContent value="basic" className="space-y-6 mt-4">
+              <div className="bg-gray-50 p-6 rounded-lg border">
+                <h3 className="text-lg font-semibold mb-4 text-gray-800">Basic Information</h3>
+                <div className="grid grid-cols-2 gap-6">
+                <div className="space-y-3">
+                  <Label htmlFor="class_name" className="text-sm font-medium text-gray-700">Class Name *</Label>
                   <Input
                     id="class_name"
                     value={newClass.class_name}
                     onChange={(e) => setNewClass({ ...newClass, class_name: e.target.value })}
                     placeholder="e.g., Computer Science 101"
+                    className={!newClass.class_name.trim() || !/^[a-zA-Z\s]+$/.test(newClass.class_name.trim()) ? 'border-red-300 focus:border-red-500' : 'border-green-300 focus:border-green-500'}
                   />
-                  <p className="text-xs text-muted-foreground">Letters only</p>
+                  <p className="text-xs text-gray-600">Letters and spaces only, no numbers or symbols</p>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="course_subject">Course/Subject *</Label>
+                <div className="space-y-3">
+                  <Label htmlFor="course_subject" className="text-sm font-medium text-gray-700">Course/Subject *</Label>
                   <Input
                     id="course_subject"
                     value={newClass.course_subject}
                     onChange={(e) => setNewClass({ ...newClass, course_subject: e.target.value })}
                     placeholder="e.g., Introduction to Programming"
+                    className={!newClass.course_subject.trim() ? 'border-red-300 focus:border-red-500' : 'border-green-300 focus:border-green-500'}
                   />
-                  <p className="text-xs text-muted-foreground">Required</p>
+                  <p className="text-xs text-gray-600">Required field</p>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="section_block">Section/Block *</Label>
+                <div className="space-y-3">
+                  <Label htmlFor="section_block" className="text-sm font-medium text-gray-700">Section/Block *</Label>
                   <Input
                     id="section_block"
                     value={newClass.section_block}
                     onChange={(e) => setNewClass({ ...newClass, section_block: e.target.value })}
-                    placeholder="e.g., A"
+                    placeholder="e.g., A, B1, CS-1A"
+                    className={!newClass.section_block.trim() ? 'border-red-300 focus:border-red-500' : 'border-green-300 focus:border-green-500'}
                   />
-                  <p className="text-xs text-muted-foreground">Required field</p>
+                  <p className="text-xs text-gray-600">Required field</p>
                 </div>
                 
-                <div className="space-y-2">
-                  <Label htmlFor="room">Room *</Label>
+                <div className="space-y-3">
+                  <Label htmlFor="room" className="text-sm font-medium text-gray-700">Room *</Label>
                   <Input
                     id="room"
                     value={newClass.room}
                     onChange={(e) => setNewClass({ ...newClass, room: e.target.value })}
-                    placeholder="e.g., 301"
+                    placeholder="e.g., 301, COMP1, LAB-A"
+                    className={!newClass.room.trim() || !/^[a-zA-Z0-9]+$/.test(newClass.room.trim()) ? 'border-red-300 focus:border-red-500' : 'border-green-300 focus:border-green-500'}
                   />
-                  <p className="text-xs text-muted-foreground">Numbers only</p>
+                  <p className="text-xs text-gray-600">Room number (letters/numbers only, e.g., 301, 204A, COMP1)</p>
                 </div>
                 
+              </div>
               </div>
             </TabsContent>
 
@@ -1002,48 +1056,60 @@ export default function StudentClasses() {
                 />
               </div>
 
-              <div className="border rounded-lg p-4 space-y-4">
-                <h4 className="font-medium">Add Student Manually</h4>
-                <div className="space-y-3">
-                  <div className="grid grid-cols-4 gap-3">
-                    <div>
+              <div className="bg-gray-50 p-6 rounded-lg border space-y-6">
+                <h4 className="text-lg font-semibold text-gray-800">Add Student Manually</h4>
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium text-gray-700">Student ID (Optional)</Label>
                       <Input
-                        placeholder="Student ID (optional)"
+                        placeholder="Auto-generated if empty"
                         value={newStudent.student_id}
                         onChange={(e) => setNewStudent({ ...newStudent, student_id: e.target.value })}
+                        className={newStudent.student_id && (!/^\d{9}$/.test(newStudent.student_id) || !newStudent.student_id.startsWith('20')) ? 'border-red-300 focus:border-red-500' : ''}
                       />
-                      <p className="text-xs text-muted-foreground mt-1">9 digits, start with 20</p>
+                      <p className="text-xs text-gray-600">9 digits, start with 20 (e.g., 202312345)</p>
                     </div>
-                    <div>
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium text-gray-700">First Name *</Label>
                       <Input
-                        placeholder="First Name *"
+                        placeholder="Enter first name"
                         value={newStudent.first_name}
                         onChange={(e) => setNewStudent({ ...newStudent, first_name: e.target.value })}
+                        className={newStudent.first_name && (!/^[a-zA-Z\s]+$/.test(newStudent.first_name) || newStudent.first_name.length < 4) ? 'border-red-300 focus:border-red-500' : ''}
                       />
-                      <p className="text-xs text-muted-foreground mt-1">Letters, 4+ chars</p>
-                    </div>
-                    <div>
-                      <Input
-                        placeholder="Last Name *"
-                        value={newStudent.last_name}
-                        onChange={(e) => setNewStudent({ ...newStudent, last_name: e.target.value })}
-                      />
-                      <p className="text-xs text-muted-foreground mt-1">Letters, 4+ chars</p>
-                    </div>
-                    <div>
-                      <Input
-                        placeholder="Email (optional)"
-                        value={newStudent.email}
-                        onChange={(e) => setNewStudent({ ...newStudent, email: e.target.value })}
-                      />
-                      <p className="text-xs text-muted-foreground mt-1">@gmail.com only</p>
+                      <p className="text-xs text-gray-600">Letters only, 4+ characters</p>
                     </div>
                   </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium text-gray-700">Last Name *</Label>
+                      <Input
+                        placeholder="Enter last name"
+                        value={newStudent.last_name}
+                        onChange={(e) => setNewStudent({ ...newStudent, last_name: e.target.value })}
+                        className={newStudent.last_name && (!/^[a-zA-Z\s]+$/.test(newStudent.last_name) || newStudent.last_name.length < 4) ? 'border-red-300 focus:border-red-500' : ''}
+                      />
+                      <p className="text-xs text-gray-600">Letters only, 4+ characters</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium text-gray-700">Email (Optional)</Label>
+                      <Input
+                        placeholder="student@gmail.com"
+                        value={newStudent.email}
+                        onChange={(e) => setNewStudent({ ...newStudent, email: e.target.value })}
+                        className={newStudent.email && !newStudent.email.includes('@gmail.com') ? 'border-red-300 focus:border-red-500' : ''}
+                      />
+                      <p className="text-xs text-gray-600">Must be @gmail.com (optional)</p>
+                    </div>
+                  </div>
+                  <div className="flex justify-end">
+                    <Button onClick={handleAddStudent} variant="default" className="bg-blue-600 hover:bg-blue-700">
+                      <Plus className="w-4 h-4 mr-2" />
+                      Add Student
+                    </Button>
+                  </div>
                 </div>
-                <Button onClick={handleAddStudent} variant="outline" size="sm">
-                  <Plus className="w-4 h-4 mr-2" />
-                  Add Student
-                </Button>
               </div>
 
               {students.length > 0 && (
@@ -1058,42 +1124,116 @@ export default function StudentClasses() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {students.map((student, idx) => (
-                        <TableRow key={`new-student-${idx}`}>
-                          <TableCell>{student.student_id}</TableCell>
-                          <TableCell>{`${student.first_name} ${student.last_name}`}</TableCell>
-                          <TableCell>{student.email || '—'}</TableCell>
-                          <TableCell className="text-right">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleRemoveStudent(student.student_id)}
-                            >
-                              <X className="w-4 h-4 text-destructive" />
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
+                      {students.map((student, idx) => {
+                        const isValidStudentId = student.student_id && /^\d{9}$/.test(student.student_id) && student.student_id.startsWith('20');
+                        const isValidFirstName = student.first_name && /^[a-zA-Z\s]+$/.test(student.first_name) && student.first_name.length >= 4;
+                        const isValidLastName = student.last_name && /^[a-zA-Z\s]+$/.test(student.last_name) && student.last_name.length >= 4;
+                        const isValidEmail = !student.email || student.email.includes('@gmail.com');
+                        const isValidStudent = isValidStudentId && isValidFirstName && isValidLastName && isValidEmail;
+                        
+                        return (
+                          <TableRow key={`new-student-${idx}`} className={!isValidStudent ? 'bg-red-50 border-red-200' : ''}>
+                            <TableCell className={!isValidStudentId ? 'text-red-600' : ''}>
+                              {student.student_id}
+                              {!isValidStudentId && <span className="ml-1 text-red-500">!</span>}
+                            </TableCell>
+                            <TableCell className={(!isValidFirstName || !isValidLastName) ? 'text-red-600' : ''}>
+                              {`${student.first_name} ${student.last_name}`}
+                              {(!isValidFirstName || !isValidLastName) && <span className="ml-1 text-red-500">!</span>}
+                            </TableCell>
+                            <TableCell className={!isValidEmail ? 'text-red-600' : ''}>
+                              {student.email || '—'}
+                              {!isValidEmail && <span className="ml-1 text-red-500">!</span>}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleRemoveStudent(student.student_id)}
+                              >
+                                <X className="w-4 h-4 text-destructive" />
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 </div>
               )}
 
-              {students.length === 0 && (
+              {students.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
                   <AlertCircle className="w-8 h-8 mx-auto mb-2" />
                   <p>No students added yet</p>
+                  <p className="text-xs mt-1">At least one student is required to create a class</p>
+                </div>
+              ) : (
+                <div className="mt-4 p-3 bg-muted rounded-lg">
+                  <div className="flex items-center justify-between text-sm">
+                    <span>Total Students: <strong>{students.length}</strong></span>
+                    <span className="text-xs text-muted-foreground">
+                      {(() => {
+                        const invalidStudents = students.filter(student => {
+                          const isValidStudentId = student.student_id && /^\d{9}$/.test(student.student_id) && student.student_id.startsWith('20');
+                          const isValidFirstName = student.first_name && /^[a-zA-Z\s]+$/.test(student.first_name) && student.first_name.length >= 4;
+                          const isValidLastName = student.last_name && /^[a-zA-Z\s]+$/.test(student.last_name) && student.last_name.length >= 4;
+                          const isValidEmail = !student.email || student.email.includes('@gmail.com');
+                          return !(isValidStudentId && isValidFirstName && isValidLastName && isValidEmail);
+                        });
+                        return invalidStudents.length > 0 
+                          ? `${invalidStudents.length} student(s) with validation errors!` 
+                          : 'All students valid ✓';
+                      })()}
+                    </span>
+                  </div>
+                  {students.some(student => {
+                    const isValidStudentId = student.student_id && /^\d{9}$/.test(student.student_id) && student.student_id.startsWith('20');
+                    const isValidFirstName = student.first_name && /^[a-zA-Z\s]+$/.test(student.first_name) && student.first_name.length >= 4;
+                    const isValidLastName = student.last_name && /^[a-zA-Z\s]+$/.test(student.last_name) && student.last_name.length >= 4;
+                    const isValidEmail = !student.email || student.email.includes('@gmail.com');
+                    return !(isValidStudentId && isValidFirstName && isValidLastName && isValidEmail);
+                  }) && (
+                    <p className="text-xs text-amber-600 mt-2">
+                      Students with validation errors (highlighted in red) must be fixed before creating the class
+                    </p>
+                  )}
                 </div>
               )}
             </TabsContent>
           </Tabs>
 
-          <DialogFooter>
+          <DialogFooter className="pt-6 border-t">
             <Button variant="outline" onClick={() => setShowAddDialog(false)}>
               Cancel
             </Button>
-            <Button onClick={handleAddClass} className="gradient-primary">
-              Add Class
+            <Button 
+              onClick={handleAddClass} 
+              className="bg-blue-600 hover:bg-blue-700 text-white"
+              disabled={(() => {
+                // Disable if basic fields are invalid
+                if (!newClass.class_name.trim() || !newClass.course_subject.trim() || !newClass.section_block.trim() || !newClass.room.trim()) {
+                  return true;
+                }
+                
+                // Disable if no students for new classes
+                if (!editingClassId && students.length === 0) {
+                  return true;
+                }
+                
+                // Disable if any student has validation errors
+                const hasInvalidStudents = students.some(student => {
+                  const isValidStudentId = student.student_id && /^\d{9}$/.test(student.student_id) && student.student_id.startsWith('20');
+                  const isValidFirstName = student.first_name && /^[a-zA-Z\s]+$/.test(student.first_name) && student.first_name.length >= 4;
+                  const isValidLastName = student.last_name && /^[a-zA-Z\s]+$/.test(student.last_name) && student.last_name.length >= 4;
+                  const isValidEmail = !student.email || student.email.includes('@gmail.com');
+                  return !(isValidStudentId && isValidFirstName && isValidLastName && isValidEmail);
+                });
+                
+                return hasInvalidStudents;
+              })()}
+            >
+              {editingClassId ? 'Update Class' : 'Create Class'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1417,6 +1557,27 @@ export default function StudentClasses() {
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Archive Confirmation Dialog */}
+      <AlertDialog open={!!archiveId} onOpenChange={() => setArchiveId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Archive Class</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will move the class to the archive. You can restore it later from the Archive section.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleArchive}
+              className="bg-amber-600 text-white hover:bg-amber-700"
+            >
+              Archive
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

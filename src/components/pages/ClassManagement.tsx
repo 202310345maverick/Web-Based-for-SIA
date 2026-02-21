@@ -43,6 +43,7 @@ import {
   Download,
   AlertCircle,
   X,
+  Archive,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import * as XLSX from "xlsx"; // Added import here
@@ -62,7 +63,7 @@ export default function ClassManagement() {
   const [classes, setClasses] = useState<Class[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [archiveId, setArchiveId] = useState<string | null>(null);
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [showViewDialog, setShowViewDialog] = useState(false);
@@ -187,17 +188,21 @@ export default function ClassManagement() {
     }
   };
 
-  const handleDelete = async () => {
-    if (!deleteId) return;
+  const handleArchive = async () => {
+    if (!archiveId) return;
 
     try {
-      await deleteClass(deleteId);
-      setClasses(classes.filter((c) => c.id !== deleteId));
-      setDeleteId(null);
-      toast.success("Class deleted successfully");
+      const classToArchive = classes.find(c => c.id === archiveId);
+      if (!classToArchive) return;
+
+      const updatedClass = { ...classToArchive, isArchived: true };
+      await updateClass(archiveId, updatedClass);
+      setClasses(classes.filter((c) => c.id !== archiveId));
+      setArchiveId(null);
+      toast.success("Class archived successfully");
     } catch (error) {
-      console.error("Error deleting class:", error);
-      toast.error("Failed to delete class");
+      console.error("Error archiving class:", error);
+      toast.error("Failed to archive class");
     }
   };
 
@@ -398,12 +403,13 @@ export default function ClassManagement() {
     XLSX.writeFile(wb, "student_import_template.xlsx");
   };
 
-  const filteredClasses = classes.filter(
-    (c) =>
+  const filteredClasses = classes
+    .filter((classItem) => !classItem.isArchived) // Only show non-archived classes
+    .filter((c) =>
       c.class_name.toLowerCase().includes(search.toLowerCase()) ||
       c.course_subject.toLowerCase().includes(search.toLowerCase()) ||
       c.section_block.toLowerCase().includes(search.toLowerCase()),
-  );
+    );
 
   return (
     <div className="page-container">
@@ -521,13 +527,13 @@ export default function ClassManagement() {
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="text-destructive hover:text-destructive"
+                      className="text-amber-600 hover:text-amber-700 hover:bg-amber-50"
                       onClick={(e) => {
                         e.stopPropagation();
-                        setDeleteId(classItem.id);
+                        setArchiveId(classItem.id);
                       }}
                     >
-                      <Trash2 className="w-4 h-4" />
+                      <Archive className="w-4 h-4" />
                     </Button>
                   </div>
                 </div>
@@ -554,7 +560,7 @@ export default function ClassManagement() {
                     <p className="text-xs text-muted-foreground mb-1">
                       Average Score
                     </p>
-                    <p className="text-sm font-medium">84%</p>
+                    <p className="text-sm font-medium text-muted-foreground">N/A</p>
                   </div>
                 </div>
 
@@ -583,12 +589,19 @@ export default function ClassManagement() {
           setShowAddDialog(true);
         }
       }}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Add New Class</DialogTitle>
-            <DialogDescription>
-              Create a new class and add students to the roster
-            </DialogDescription>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto border-2 border-green-200 rounded-xl">
+          <DialogHeader className="bg-gradient-to-r from-green-50 to-emerald-50 -m-6 mb-6 p-6 rounded-t-xl border-b border-green-200">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
+                <Plus className="w-6 h-6 text-green-600" />
+              </div>
+              <div>
+                <DialogTitle className="text-2xl font-bold text-green-900">Add New Class</DialogTitle>
+                <DialogDescription className="text-green-700 text-base">
+                  Create a new class and add students to the roster
+                </DialogDescription>
+              </div>
+            </div>
           </DialogHeader>
 
           <Tabs
@@ -596,70 +609,181 @@ export default function ClassManagement() {
             onValueChange={setCurrentTab}
             className="w-full"
           >
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="basic">Class Information</TabsTrigger>
-              <TabsTrigger value="students">Student Roster</TabsTrigger>
+            <TabsList className="grid w-full grid-cols-2 bg-green-100 border border-green-200">
+              <TabsTrigger 
+                value="basic" 
+                className="data-[state=active]:bg-green-600 data-[state=active]:text-white font-medium"
+              >
+                Class Information
+              </TabsTrigger>
+              <TabsTrigger 
+                value="students" 
+                className="data-[state=active]:bg-green-600 data-[state=active]:text-white font-medium"
+              >
+                Student Roster
+              </TabsTrigger>
             </TabsList>
 
-            <TabsContent value="basic" className="space-y-4 mt-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="class_name">Class Name *</Label>
-                  <Input
-                    id="class_name"
-                    value={newClass.class_name}
-                    onChange={(e) =>
-                      setNewClass({ ...newClass, class_name: e.target.value })
-                    }
-                    placeholder="e.g., Computer Science 101"
-                  />
+            <TabsContent value="basic" className="space-y-6 mt-6 p-6 bg-gradient-to-br from-green-50/50 to-emerald-50/50 rounded-lg border border-green-200">
+              <div className="grid grid-cols-2 gap-6">
+                <div className="space-y-3">
+                  <Label htmlFor="class_name" className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                    Class Name <span className="text-red-500">*</span>
+                  </Label>
+                  <div className="relative">
+                    <Input
+                      id="class_name"
+                      value={newClass.class_name}
+                      onChange={(e) =>
+                        setNewClass({ ...newClass, class_name: e.target.value })
+                      }
+                      placeholder="Enter class name"
+                      className={`transition-all duration-200 border-2 rounded-lg px-4 py-3 ${
+                        newClass.class_name.trim() 
+                          ? 'border-green-400 focus:border-green-500 focus:ring-4 focus:ring-green-100 bg-green-50/30' 
+                          : 'border-gray-200 focus:border-green-400 focus:ring-4 focus:ring-green-100'
+                      }`}
+                    />
+                    {newClass.class_name.trim() && (
+                      <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                        <div className="w-5 h-5 bg-green-500 rounded-full flex items-center justify-center">
+                          <span className="text-white text-xs font-bold">✓</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  {newClass.class_name.trim() && (
+                    <div className="flex items-center gap-2 text-xs text-green-600">
+                      <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                      <span>Valid class name</span>
+                    </div>
+                  )}
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="course_subject">Course/Subject *</Label>
-                  <Input
-                    id="course_subject"
-                    value={newClass.course_subject}
-                    onChange={(e) =>
-                      setNewClass({
-                        ...newClass,
-                        course_subject: e.target.value,
-                      })
-                    }
-                    placeholder="e.g., Introduction to Programming"
-                  />
+                <div className="space-y-3">
+                  <Label htmlFor="course_subject" className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                    Course/Subject <span className="text-red-500">*</span>
+                  </Label>
+                  <div className="relative">
+                    <Input
+                      id="course_subject"
+                      value={newClass.course_subject}
+                      onChange={(e) =>
+                        setNewClass({
+                          ...newClass,
+                          course_subject: e.target.value,
+                        })
+                      }
+                      placeholder="Enter course subject"
+                      className={`transition-all duration-200 border-2 rounded-lg px-4 py-3 ${
+                        newClass.course_subject.trim() 
+                          ? 'border-green-400 focus:border-green-500 focus:ring-4 focus:ring-green-100 bg-green-50/30' 
+                          : 'border-gray-200 focus:border-green-400 focus:ring-4 focus:ring-green-100'
+                      }`}
+                    />
+                    {newClass.course_subject.trim() && (
+                      <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                        <div className="w-5 h-5 bg-green-500 rounded-full flex items-center justify-center">
+                          <span className="text-white text-xs font-bold">✓</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  {newClass.course_subject.trim() && (
+                    <div className="flex items-center gap-2 text-xs text-green-600">
+                      <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                      <span>Valid course subject</span>
+                    </div>
+                  )}
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="section_block">Block *</Label>
-                  <select
-                    id="section_block"
-                    value={newClass.section_block}
-                    onChange={(e) =>
-                      setNewClass({
-                        ...newClass,
-                        section_block: e.target.value,
-                      })
-                    }
-                    className="w-full px-3 py-2 border border-input rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-                  >
-                    <option value="">Select a block...</option>
-                    {Array.from({ length: 26 }, (_, i) =>
-                      String.fromCharCode(65 + i)
-                    ).map((letter) => (
-                      <option key={letter} value={letter}>
-                        {letter}
-                      </option>
-                    ))}
-                  </select>
+                <div className="space-y-3">
+                  <Label htmlFor="section_block" className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                    Block <span className="text-red-500">*</span>
+                  </Label>
+                  <div className="relative">
+                    <select
+                      id="section_block"
+                      value={newClass.section_block}
+                      onChange={(e) =>
+                        setNewClass({
+                          ...newClass,
+                          section_block: e.target.value,
+                        })
+                      }
+                      className={`w-full transition-all duration-200 border-2 rounded-lg px-4 py-3 bg-background focus:outline-none focus:ring-4 ${
+                        newClass.section_block.trim() 
+                          ? 'border-green-400 focus:border-green-500 focus:ring-green-100 bg-green-50/30' 
+                          : 'border-gray-200 focus:border-green-400 focus:ring-green-100'
+                      }`}
+                    >
+                      <option value="">Select a block...</option>
+                      {Array.from({ length: 26 }, (_, i) =>
+                        String.fromCharCode(65 + i)
+                      ).map((letter) => (
+                        <option key={letter} value={letter}>
+                          {letter}
+                        </option>
+                      ))}
+                    </select>
+                    {newClass.section_block.trim() && (
+                      <div className="absolute right-8 top-1/2 transform -translate-y-1/2">
+                        <div className="w-5 h-5 bg-green-500 rounded-full flex items-center justify-center">
+                          <span className="text-white text-xs font-bold">✓</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  {newClass.section_block.trim() && (
+                    <div className="flex items-center gap-2 text-xs text-green-600">
+                      <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                      <span>Block selected</span>
+                    </div>
+                  )}
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="room">Room</Label>
-                  <Input
-                    id="room"
-                    value={newClass.room}
-                    onChange={(e) =>
-                      setNewClass({ ...newClass, room: e.target.value })
-                    }
-                    placeholder="e.g., Room 301"
+                <div className="space-y-3">
+                  <Label htmlFor="room" className="text-sm font-semibold text-gray-700">
+                    Room <span className="text-gray-400 text-xs">(Optional)</span>
+                  </Label>
+                  <div className="relative">
+                    <Input
+                      id="room"
+                      value={newClass.room}
+                      onChange={(e) =>
+                        setNewClass({ ...newClass, room: e.target.value })
+                      }
+                      placeholder="Enter room number"
+                      className="transition-all duration-200 border-2 border-gray-200 focus:border-green-400 focus:ring-4 focus:ring-green-100 rounded-lg px-4 py-3"
+                    />
+                    {newClass.room.trim() && (
+                      <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                        <div className="w-5 h-5 bg-blue-500 rounded-full flex items-center justify-center">
+                          <span className="text-white text-xs font-bold">✓</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  {newClass.room.trim() && (
+                    <div className="flex items-center gap-2 text-xs text-blue-600">
+                      <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
+                      <span>Room specified</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Progress Indicator */}
+              <div className="bg-white border-2 border-green-200 rounded-xl p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-medium text-green-700">Form Progress:</span>
+                  <span className="text-sm font-semibold text-green-600">
+                    {[newClass.class_name.trim(), newClass.course_subject.trim(), newClass.section_block.trim()].filter(Boolean).length}/3 Required
+                  </span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div 
+                    className="bg-gradient-to-r from-green-400 to-green-600 h-2 rounded-full transition-all duration-500"
+                    style={{ 
+                      width: `${[newClass.class_name.trim(), newClass.course_subject.trim(), newClass.section_block.trim()].filter(Boolean).length * 33.33}%` 
+                    }}
                   />
                 </div>
               </div>
@@ -688,51 +812,142 @@ export default function ClassManagement() {
                 />
               </div>
 
-              <div className="border rounded-lg p-4 space-y-4">
-                <h4 className="font-medium">Add Student Manually</h4>
-                <div className="grid grid-cols-4 gap-3">
-                  <Input
-                    placeholder="Student ID"
-                    value={newStudent.student_id}
-                    onChange={(e) =>
-                      setNewStudent({
-                        ...newStudent,
-                        student_id: e.target.value,
-                      })
-                    }
-                  />
-                  <Input
-                    placeholder="First Name"
-                    value={newStudent.first_name}
-                    onChange={(e) =>
-                      setNewStudent({
-                        ...newStudent,
-                        first_name: e.target.value,
-                      })
-                    }
-                  />
-                  <Input
-                    placeholder="Last Name"
-                    value={newStudent.last_name}
-                    onChange={(e) =>
-                      setNewStudent({
-                        ...newStudent,
-                        last_name: e.target.value,
-                      })
-                    }
-                  />
-                  <Input
-                    placeholder="Email (optional)"
-                    value={newStudent.email}
-                    onChange={(e) =>
-                      setNewStudent({ ...newStudent, email: e.target.value })
-                    }
-                  />
+              <div className="bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-lg p-6 space-y-5">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+                    <Plus className="w-5 h-5 text-green-600" />
+                  </div>
+                  <div>
+                    <h4 className="font-semibold text-green-900">Add Student Manually</h4>
+                    <p className="text-sm text-green-700">Enter student information below</p>
+                  </div>
                 </div>
-                <Button onClick={handleAddStudent} variant="outline" size="sm">
-                  <Plus className="w-4 h-4 mr-2" />
-                  Add Student
-                </Button>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-foreground flex items-center gap-2">
+                      Student ID 
+                      <span className="text-destructive">*</span>
+                    </label>
+                    <Input
+                      placeholder="Enter student ID"
+                      value={newStudent.student_id}
+                      onChange={(e) =>
+                        setNewStudent({
+                          ...newStudent,
+                          student_id: e.target.value,
+                        })
+                      }
+                      className={`transition-all duration-200 ${
+                        newStudent.student_id.trim() 
+                          ? 'border-green-500 focus:border-green-500 focus:ring-green-200' 
+                          : 'focus:border-primary focus:ring-primary/20'
+                      }`}
+                    />
+                    {newStudent.student_id.trim() && (
+                      <div className="flex items-center gap-1 text-xs text-green-600">
+                        <div className="w-2 h-2 bg-green-500 rounded-full" />
+                        Valid student ID
+                      </div>
+                    )}
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-foreground flex items-center gap-2">
+                      First Name 
+                      <span className="text-destructive">*</span>
+                    </label>
+                    <Input
+                      placeholder="Enter first name"
+                      value={newStudent.first_name}
+                      onChange={(e) =>
+                        setNewStudent({
+                          ...newStudent,
+                          first_name: e.target.value,
+                        })
+                      }
+                      className={`transition-all duration-200 ${
+                        newStudent.first_name.trim() 
+                          ? 'border-green-500 focus:border-green-500 focus:ring-green-200' 
+                          : 'focus:border-primary focus:ring-primary/20'
+                      }`}
+                    />
+                    {newStudent.first_name.trim() && (
+                      <div className="flex items-center gap-1 text-xs text-green-600">
+                        <div className="w-2 h-2 bg-green-500 rounded-full" />
+                        Valid first name
+                      </div>
+                    )}
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-foreground flex items-center gap-2">
+                      Last Name 
+                      <span className="text-destructive">*</span>
+                    </label>
+                    <Input
+                      placeholder="Enter last name"
+                      value={newStudent.last_name}
+                      onChange={(e) =>
+                        setNewStudent({
+                          ...newStudent,
+                          last_name: e.target.value,
+                        })
+                      }
+                      className={`transition-all duration-200 ${
+                        newStudent.last_name.trim() 
+                          ? 'border-green-500 focus:border-green-500 focus:ring-green-200' 
+                          : 'focus:border-primary focus:ring-primary/20'
+                      }`}
+                    />
+                    {newStudent.last_name.trim() && (
+                      <div className="flex items-center gap-1 text-xs text-green-600">
+                        <div className="w-2 h-2 bg-green-500 rounded-full" />
+                        Valid last name
+                      </div>
+                    )}
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-foreground">
+                      Email 
+                      <span className="text-muted-foreground text-xs">(Optional)</span>
+                    </label>
+                    <Input
+                      placeholder="Enter email address"
+                      type="email"
+                      value={newStudent.email}
+                      onChange={(e) =>
+                        setNewStudent({ ...newStudent, email: e.target.value })
+                      }
+                      className="focus:border-primary focus:ring-primary/20 transition-all duration-200"
+                    />
+                    {newStudent.email.trim() && (
+                      <div className="flex items-center gap-1 text-xs text-green-600">
+                        <div className="w-2 h-2 bg-green-500 rounded-full" />
+                        Email provided
+                      </div>
+                    )}
+                  </div>
+                </div>
+                
+                <div className="flex items-center justify-between pt-2 border-t border-green-200">
+                  <div className="text-sm text-green-700">
+                    <span className="font-medium">
+                      {newStudent.student_id.trim() && newStudent.first_name.trim() && newStudent.last_name.trim() 
+                        ? 'Ready to add' 
+                        : 'Fill required fields'}
+                    </span>
+                  </div>
+                  <Button 
+                    onClick={handleAddStudent} 
+                    disabled={!newStudent.student_id.trim() || !newStudent.first_name.trim() || !newStudent.last_name.trim()}
+                    className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 min-w-[120px]"
+                  >
+                    <Plus className="w-4 h-4 mr-2" />
+                    Add Student
+                  </Button>
+                </div>
               </div>
 
               {students.length > 0 && (
@@ -912,51 +1127,142 @@ export default function ClassManagement() {
                 />
               </div>
 
-              <div className="border rounded-lg p-4 space-y-4">
-                <h4 className="font-medium">Add Student Manually</h4>
-                <div className="grid grid-cols-4 gap-3">
-                  <Input
-                    placeholder="Student ID"
-                    value={newStudent.student_id}
-                    onChange={(e) =>
-                      setNewStudent({
-                        ...newStudent,
-                        student_id: e.target.value,
-                      })
-                    }
-                  />
-                  <Input
-                    placeholder="First Name"
-                    value={newStudent.first_name}
-                    onChange={(e) =>
-                      setNewStudent({
-                        ...newStudent,
-                        first_name: e.target.value,
-                      })
-                    }
-                  />
-                  <Input
-                    placeholder="Last Name"
-                    value={newStudent.last_name}
-                    onChange={(e) =>
-                      setNewStudent({
-                        ...newStudent,
-                        last_name: e.target.value,
-                      })
-                    }
-                  />
-                  <Input
-                    placeholder="Email (optional)"
-                    value={newStudent.email}
-                    onChange={(e) =>
-                      setNewStudent({ ...newStudent, email: e.target.value })
-                    }
-                  />
+              <div className="bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-lg p-6 space-y-5">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+                    <Plus className="w-5 h-5 text-green-600" />
+                  </div>
+                  <div>
+                    <h4 className="font-semibold text-green-900">Add Student Manually</h4>
+                    <p className="text-sm text-green-700">Add new students to this class</p>
+                  </div>
                 </div>
-                <Button onClick={handleAddStudent} variant="outline" size="sm">
-                  <Plus className="w-4 h-4 mr-2" />
-                  Add Student
-                </Button>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-foreground flex items-center gap-2">
+                      Student ID 
+                      <span className="text-destructive">*</span>
+                    </label>
+                    <Input
+                      placeholder="Enter student ID"
+                      value={newStudent.student_id}
+                      onChange={(e) =>
+                        setNewStudent({
+                          ...newStudent,
+                          student_id: e.target.value,
+                        })
+                      }
+                      className={`transition-all duration-200 ${
+                        newStudent.student_id.trim() 
+                          ? 'border-green-500 focus:border-green-500 focus:ring-green-200' 
+                          : 'focus:border-primary focus:ring-primary/20'
+                      }`}
+                    />
+                    {newStudent.student_id.trim() && (
+                      <div className="flex items-center gap-1 text-xs text-green-600">
+                        <div className="w-2 h-2 bg-green-500 rounded-full" />
+                        Valid student ID
+                      </div>
+                    )}
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-foreground flex items-center gap-2">
+                      First Name 
+                      <span className="text-destructive">*</span>
+                    </label>
+                    <Input
+                      placeholder="Enter first name"
+                      value={newStudent.first_name}
+                      onChange={(e) =>
+                        setNewStudent({
+                          ...newStudent,
+                          first_name: e.target.value,
+                        })
+                      }
+                      className={`transition-all duration-200 ${
+                        newStudent.first_name.trim() 
+                          ? 'border-green-500 focus:border-green-500 focus:ring-green-200' 
+                          : 'focus:border-primary focus:ring-primary/20'
+                      }`}
+                    />
+                    {newStudent.first_name.trim() && (
+                      <div className="flex items-center gap-1 text-xs text-green-600">
+                        <div className="w-2 h-2 bg-green-500 rounded-full" />
+                        Valid first name
+                      </div>
+                    )}
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-foreground flex items-center gap-2">
+                      Last Name 
+                      <span className="text-destructive">*</span>
+                    </label>
+                    <Input
+                      placeholder="Enter last name"
+                      value={newStudent.last_name}
+                      onChange={(e) =>
+                        setNewStudent({
+                          ...newStudent,
+                          last_name: e.target.value,
+                        })
+                      }
+                      className={`transition-all duration-200 ${
+                        newStudent.last_name.trim() 
+                          ? 'border-green-500 focus:border-green-500 focus:ring-green-200' 
+                          : 'focus:border-primary focus:ring-primary/20'
+                      }`}
+                    />
+                    {newStudent.last_name.trim() && (
+                      <div className="flex items-center gap-1 text-xs text-green-600">
+                        <div className="w-2 h-2 bg-green-500 rounded-full" />
+                        Valid last name
+                      </div>
+                    )}
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-foreground">
+                      Email 
+                      <span className="text-muted-foreground text-xs">(Optional)</span>
+                    </label>
+                    <Input
+                      placeholder="Enter email address"
+                      type="email"
+                      value={newStudent.email}
+                      onChange={(e) =>
+                        setNewStudent({ ...newStudent, email: e.target.value })
+                      }
+                      className="focus:border-primary focus:ring-primary/20 transition-all duration-200"
+                    />
+                    {newStudent.email.trim() && (
+                      <div className="flex items-center gap-1 text-xs text-blue-600">
+                        <div className="w-2 h-2 bg-blue-500 rounded-full" />
+                        Email provided
+                      </div>
+                    )}
+                  </div>
+                </div>
+                
+                <div className="flex items-center justify-between pt-2 border-t border-green-200">
+                  <div className="text-sm text-green-700">
+                    <span className="font-medium">
+                      {newStudent.student_id.trim() && newStudent.first_name.trim() && newStudent.last_name.trim() 
+                        ? 'Ready to add' 
+                        : 'Fill required fields'}
+                    </span>
+                  </div>
+                  <Button 
+                    onClick={handleAddStudent} 
+                    disabled={!newStudent.student_id.trim() || !newStudent.first_name.trim() || !newStudent.last_name.trim()}
+                    className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 min-w-[120px]"
+                  >
+                    <Plus className="w-4 h-4 mr-2" />
+                    Add Student
+                  </Button>
+                </div>
               </div>
 
               {students.length > 0 && (
@@ -1257,23 +1563,22 @@ export default function ClassManagement() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
-      <AlertDialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>
+      {/* Archive Confirmation Dialog */}
+      <AlertDialog open={!!archiveId} onOpenChange={() => setArchiveId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogTitle>Archive Class?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete this class and all associated data.
-              This action cannot be undone.
+              This will move the class to the archive. You can restore it later from the Archive page if needed.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={handleDelete}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={handleArchive}
+              className="bg-amber-600 text-white hover:bg-amber-700"
             >
-              Delete
+              Archive
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
