@@ -6,6 +6,8 @@ import { Card } from '@/components/ui/card';
 import { ArrowLeft, BarChart3, TrendingUp, AlertCircle } from 'lucide-react';
 import { getExamById, Exam } from '@/services/examService';
 import { AnswerKeyService } from '@/services/answerKeyService';
+import { ScanningService } from '@/services/scanningService';
+import { AnswerChoice } from '@/types/scanning';
 import { toast } from 'sonner';
 
 interface ItemAnalysisProps {
@@ -14,6 +16,7 @@ interface ItemAnalysisProps {
 
 interface QuestionAnalysis {
   questionNumber: number;
+  correctAnswer: string;
   correctRate: number;
   difficulty: 'Easy' | 'Medium' | 'Hard';
   discrimination: number;
@@ -25,51 +28,136 @@ export default function ItemAnalysisPage({ params }: ItemAnalysisProps) {
   const [exam, setExam] = useState<Exam | null>(null);
   const [loading, setLoading] = useState(true);
   const [questions, setQuestions] = useState<QuestionAnalysis[]>([]);
+  const [totalPapers, setTotalPapers] = useState(0);
   const examId = params.id;
 
   useEffect(() => {
     const fetchAnalysisData = async () => {
       try {
-        const examData = await getExamById(params.id);
+        const examData = await getExamById(examId);
         if (!examData) {
           toast.error('Exam not found');
+          setLoading(false);
           return;
         }
         setExam(examData);
 
-        // Generate mock analysis data based on number of items
-        const mockQuestions: QuestionAnalysis[] = [];
-        for (let i = 1; i <= examData.num_items; i++) {
-          const correctRate = Math.floor(Math.random() * 100);
+        // Fetch answer key
+        const akResult = await AnswerKeyService.getAnswerKeyByExamId(examId);
+        let answerKey: AnswerChoice[] = [];
+        if (akResult.success && akResult.data) {
+          answerKey = akResult.data.answers;
+        }
+
+        // Fetch real scanned results
+        const scannedResult = await ScanningService.getScannedResultsByExamId(examId);
+        const validResults = (scannedResult.success && scannedResult.data)
+          ? scannedResult.data.filter(r => !r.isNullId)
+          : [];
+        setTotalPapers(validResults.length);
+
+        if (validResults.length === 0 || answerKey.length === 0) {
+          // No data to analyze
+          setQuestions([]);
+          setLoading(false);
+          return;
+        }
+
+        // Sort students by total score for discrimination calculation
+        const studentScores = validResults.map(r => {
+          let score = 0;
+          r.answers.forEach((ans, idx) => {
+            if (answerKey[idx] && ans && ans.toUpperCase() === answerKey[idx].toUpperCase()) {
+              score++;
+            }
+          });
+          return { ...r, calculatedScore: score };
+        }).sort((a, b) => b.calculatedScore - a.calculatedScore);
+
+        // Upper 27% and lower 27% groups for discrimination
+        const groupSize = Math.max(1, Math.ceil(studentScores.length * 0.27));
+        const upperGroup = studentScores.slice(0, groupSize);
+        const lowerGroup = studentScores.slice(-groupSize);
+
+        const numQuestions = examData.num_items;
+        const choicesCount = examData.choices_per_item;
+        const analysisData: QuestionAnalysis[] = [];
+
+        for (let i = 0; i < numQuestions; i++) {
+          const correctAnswer = answerKey[i] || '';
+          let correctCount = 0;
+          const distribution: { [choice: string]: number } = {};
+
+          // Initialize distribution for all choices
+          for (let j = 0; j < choicesCount; j++) {
+            distribution[String.fromCharCode(65 + j)] = 0;
+          }
+
+          // Count responses for this question
+          let totalResponded = 0;
+          validResults.forEach(result => {
+            const ans = result.answers[i];
+            if (ans) {
+              const upperAns = ans.toUpperCase();
+              if (distribution.hasOwnProperty(upperAns)) {
+                distribution[upperAns]++;
+              }
+              totalResponded++;
+              if (correctAnswer && upperAns === correctAnswer.toUpperCase()) {
+                correctCount++;
+              }
+            }
+          });
+
+          const correctRate = totalResponded > 0
+            ? Math.round((correctCount / totalResponded) * 100)
+            : 0;
+
           let difficulty: 'Easy' | 'Medium' | 'Hard' = 'Medium';
           if (correctRate > 75) difficulty = 'Easy';
           else if (correctRate < 40) difficulty = 'Hard';
 
-          const choiceDistribution: { [choice: string]: number } = {};
-          for (let j = 0; j < examData.choices_per_item; j++) {
-            choiceDistribution[String.fromCharCode(65 + j)] = Math.floor(Math.random() * 30) + 5;
-          }
+          // Discrimination index (upper group correct% - lower group correct%)
+          let upperCorrect = 0;
+          upperGroup.forEach(r => {
+            const ans = r.answers[i];
+            if (ans && correctAnswer && ans.toUpperCase() === correctAnswer.toUpperCase()) {
+              upperCorrect++;
+            }
+          });
+          let lowerCorrect = 0;
+          lowerGroup.forEach(r => {
+            const ans = r.answers[i];
+            if (ans && correctAnswer && ans.toUpperCase() === correctAnswer.toUpperCase()) {
+              lowerCorrect++;
+            }
+          });
+          const discrimination = groupSize > 0
+            ? parseFloat(((upperCorrect / groupSize) - (lowerCorrect / groupSize)).toFixed(2))
+            : 0;
 
-          mockQuestions.push({
-            questionNumber: i,
+          analysisData.push({
+            questionNumber: i + 1,
+            correctAnswer: correctAnswer.toUpperCase(),
             correctRate,
             difficulty,
-            discrimination: parseFloat((Math.random() * 1).toFixed(2)),
-            choiceDistribution,
-            totalResponses: Object.values(choiceDistribution).reduce((a, b) => a + b, 0)
+            discrimination,
+            choiceDistribution: distribution,
+            totalResponses: totalResponded,
           });
         }
-        setQuestions(mockQuestions);
+
+        setQuestions(analysisData);
       } catch (error) {
-        console.error('Error fetching exam data:', error);
-        toast.error('Failed to load exam data');
+        console.error('Error fetching analysis data:', error);
+        toast.error('Failed to load item analysis');
       } finally {
         setLoading(false);
       }
     };
 
-      fetchAnalysisData();
-    }, [examId, params]);  if (loading) {
+    fetchAnalysisData();
+  }, [examId]);  if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="flex flex-col items-center gap-3">
@@ -118,16 +206,21 @@ export default function ItemAnalysisPage({ params }: ItemAnalysisProps) {
       </div>
 
       {/* Summary Stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <Card className="p-4 sm:p-6 border">
-          <p className="text-xs sm:text-sm font-semibold text-muted-foreground mb-2">Average Correct Rate</p>
+          <p className="text-xs sm:text-sm font-semibold text-muted-foreground mb-2">Papers Analyzed</p>
+          <p className="text-2xl sm:text-3xl font-bold text-primary">{totalPapers}</p>
+          <p className="text-xs text-muted-foreground mt-2">Scanned answer sheets</p>
+        </Card>
+        <Card className="p-4 sm:p-6 border">
+          <p className="text-xs sm:text-sm font-semibold text-muted-foreground mb-2">Avg Correct Rate</p>
           <p className="text-2xl sm:text-3xl font-bold text-primary">{avgCorrectRate}%</p>
-          <p className="text-xs text-muted-foreground mt-2">Overall student performance</p>
+          <p className="text-xs text-muted-foreground mt-2">Overall performance</p>
         </Card>
         <Card className="p-4 sm:p-6 border">
           <p className="text-xs sm:text-sm font-semibold text-muted-foreground mb-2">Avg Discrimination</p>
           <p className="text-2xl sm:text-3xl font-bold text-primary">{avgDiscrimination}</p>
-          <p className="text-xs text-muted-foreground mt-2">Item quality indicator</p>
+          <p className="text-xs text-muted-foreground mt-2">Item quality (0-1)</p>
         </Card>
         <Card className="p-4 sm:p-6 border">
           <p className="text-xs sm:text-sm font-semibold text-muted-foreground mb-2">Questions Analyzed</p>
@@ -164,20 +257,24 @@ export default function ItemAnalysisPage({ params }: ItemAnalysisProps) {
           {questions.length === 0 ? (
             <div className="text-center py-8">
               <AlertCircle className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
-              <p className="text-muted-foreground">No question data available yet.</p>
+              <p className="text-muted-foreground font-medium">No analysis data available yet.</p>
+              <p className="text-sm text-muted-foreground mt-1">Scan answer sheets to generate item analysis.</p>
             </div>
           ) : (
             questions.map(q => (
               <div key={q.questionNumber} className="p-4 border rounded-lg hover:bg-muted/50 transition-colors">
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
-                  <div>
+                  <div className="flex items-center gap-2">
                     <span className="font-bold text-foreground">Question {q.questionNumber}</span>
+                    <span className="text-xs px-2 py-0.5 rounded bg-primary/10 text-primary font-medium">
+                      Key: {q.correctAnswer}
+                    </span>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <span className={`px-3 py-1 rounded text-xs font-semibold ${
                       q.correctRate >= 75
                         ? 'bg-green-50 text-green-700'
-                        : q.correctRate >= 50
+                        : q.correctRate >= 40
                         ? 'bg-yellow-50 text-yellow-700'
                         : 'bg-red-50 text-red-700'
                     }`}>
@@ -199,15 +296,18 @@ export default function ItemAnalysisPage({ params }: ItemAnalysisProps) {
                   <div className="grid grid-cols-4 sm:grid-cols-5 gap-2">
                     {Object.entries(q.choiceDistribution).map(([choice, count]) => {
                       const percentage = q.totalResponses > 0 ? (count / q.totalResponses) * 100 : 0;
+                      const isCorrect = choice === q.correctAnswer;
                       return (
                         <div key={choice} className="text-center">
-                          <div className="w-full bg-muted rounded-md overflow-hidden mb-1">
+                          <div className={`w-full rounded-md overflow-hidden mb-1 ${isCorrect ? 'ring-2 ring-green-500' : ''}`}>
                             <div
-                              className="h-16 bg-primary/20 flex items-center justify-center transition-all"
+                              className={`flex items-center justify-center transition-all ${isCorrect ? 'bg-green-200' : 'bg-primary/20'}`}
                               style={{ height: `${Math.max(40, percentage * 2)}px` }}
                             />
                           </div>
-                          <p className="text-xs font-semibold text-foreground">{choice}</p>
+                          <p className={`text-xs font-semibold ${isCorrect ? 'text-green-700' : 'text-foreground'}`}>
+                            {choice} {isCorrect ? '✓' : ''}
+                          </p>
                           <p className="text-xs text-muted-foreground">{count} ({Math.round(percentage)}%)</p>
                         </div>
                       );
@@ -216,9 +316,17 @@ export default function ItemAnalysisPage({ params }: ItemAnalysisProps) {
                 </div>
 
                 <div className="flex flex-wrap gap-3 text-xs">
-                  <div className="px-3 py-1 bg-muted rounded">
+                  <div className={`px-3 py-1 rounded ${
+                    q.discrimination >= 0.4 ? 'bg-green-50' :
+                    q.discrimination >= 0.2 ? 'bg-yellow-50' :
+                    'bg-red-50'
+                  }`}>
                     <span className="font-semibold text-muted-foreground">Discrimination: </span>
-                    <span className="font-bold text-foreground">{q.discrimination}</span>
+                    <span className={`font-bold ${
+                      q.discrimination >= 0.4 ? 'text-green-700' :
+                      q.discrimination >= 0.2 ? 'text-yellow-700' :
+                      'text-red-700'
+                    }`}>{q.discrimination}</span>
                   </div>
                   <div className="px-3 py-1 bg-muted rounded">
                     <span className="font-semibold text-muted-foreground">Total Responses: </span>

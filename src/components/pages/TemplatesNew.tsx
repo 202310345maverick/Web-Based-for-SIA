@@ -23,7 +23,7 @@ import {
 import { FileText, Download, Plus, Eye } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
-import { collection, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, getDocs, addDoc, serverTimestamp, query, where } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { generateTemplatePDF } from '@/lib/templatePdfGenerator';
 
@@ -108,9 +108,20 @@ export default function Templates() {
   };
 
   const fetchTemplates = async () => {
+    if (!user?.instructorId) {
+      console.log('No instructorId found, skipping template fetch');
+      setLoading(false);
+      return;
+    }
+
     try {
       setLoading(true);
-      const templatesSnapshot = await getDocs(collection(db, 'templates'));
+      // Query templates filtered by current user's instructorId
+      const templatesQuery = query(
+        collection(db, 'templates'),
+        where('instructorId', '==', user.instructorId)
+      );
+      const templatesSnapshot = await getDocs(templatesQuery);
       const fetchedTemplates = templatesSnapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data(),
@@ -506,101 +517,201 @@ export default function Templates() {
           <DialogHeader>
             <DialogTitle>Template Preview: {previewTemplate?.name}</DialogTitle>
             <DialogDescription>
-              Preview of how the answer sheet will look when printed
+              Preview of how the answer sheet will look when printed (A4 size)
             </DialogDescription>
           </DialogHeader>
 
-          <div className="border rounded-lg p-8 bg-white overflow-auto" style={{ maxHeight: '60vh' }}>
-            {previewTemplate && (
-              <div className="max-w-[8.5in] mx-auto bg-white">
-                {/* ZipGrade-style Preview */}
-                <div className="border-4 border-black p-4">
-                  {/* Header */}
-                  <div className="grid grid-cols-3 gap-4 mb-4 pb-4 border-b-2 border-black">
-                    <div>
-                      <div className="text-xs font-bold mb-1">Name:</div>
-                      <div className="border-b border-black h-6"></div>
-                    </div>
-                    <div>
-                      <div className="text-xs font-bold mb-1">Class:</div>
-                      <div className="border-b border-black h-6"></div>
-                    </div>
-                    <div>
-                      <div className="text-xs font-bold mb-1">Date:</div>
-                      <div className="border-b border-black h-6"></div>
-                    </div>
-                  </div>
+          <div className="border rounded-lg p-4 bg-gray-200 overflow-auto" style={{ maxHeight: '65vh' }}>
+            {previewTemplate && (() => {
+              const numQ = previewTemplate.numQuestions;
+              const numC = previewTemplate.choicesPerQuestion;
+              const choiceLetters = ['A', 'B', 'C', 'D', 'E'].slice(0, numC);
 
-                  {/* Student ID Section */}
-                  {previewTemplate.includeStudentId && (
-                    <div className="mb-4 pb-4 border-b-2 border-black">
-                      <div className="text-xs font-bold mb-2 flex items-center gap-2">
-                        <span>Student Zipcode</span>
-                        <div className="w-3 h-3 rounded-full border-2 border-black"></div>
-                      </div>
-                      <div className="flex gap-1 justify-center">
-                        {Array.from({ length: previewTemplate.studentIdLength }).map((_, i) => (
-                          <div key={i} className="flex flex-col items-center">
-                            <div className="text-[10px] font-mono mb-0.5">{i}</div>
-                            {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
-                              <div key={num} className="w-4 h-4 rounded-full border border-black flex items-center justify-center text-[8px] my-0.5">
-                                {num}
-                              </div>
-                            ))}
-                          </div>
+              // Reusable: question block component
+              const QBlock = ({ startQ, endQ }: { startQ: number; endQ: number }) => (
+                <div>
+                  {/* Header: ■ A B C D */}
+                  <div className="flex items-center gap-[2px] mb-[2px]">
+                    <div className="w-[6px] h-[6px] bg-black flex-shrink-0"></div>
+                    <div className="w-[14px]"></div>
+                    {choiceLetters.map(c => (
+                      <div key={c} className="w-[10px] text-center text-[6px] font-bold leading-none">{c}</div>
+                    ))}
+                  </div>
+                  {/* Rows */}
+                  {Array.from({ length: endQ - startQ + 1 }).map((_, i) => (
+                    <div key={i} className="flex items-center gap-[2px] mb-[1px]">
+                      <div className="w-[6px]"></div>
+                      <div className="w-[14px] text-right text-[6px] font-bold leading-none pr-[2px]">{startQ + i}</div>
+                      {choiceLetters.map((_, j) => (
+                        <div key={j} className="w-[10px] h-[10px] rounded-full border border-gray-800 bg-white flex-shrink-0"></div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              );
+
+              // Reusable: ID section
+              const IdSection = ({ small }: { small?: boolean }) => (
+                <div className={`border border-black ${small ? 'p-1' : 'p-1.5'}`}>
+                  <div className={`${small ? 'text-[6px]' : 'text-[7px]'} font-bold mb-0.5`}>Student ZipGrade ID</div>
+                  {/* Input boxes */}
+                  <div className="flex gap-[2px] mb-[2px]">
+                    {Array.from({ length: 10 }).map((_, i) => (
+                      <div key={i} className={`${small ? 'w-[8px] h-[7px]' : 'w-[10px] h-[8px]'} border border-black`}></div>
+                    ))}
+                  </div>
+                  {/* Bubble grid */}
+                  <div className="flex gap-[1px] items-start">
+                    <div className="flex flex-col">
+                      {[0,1,2,3,4,5,6,7,8,9].map(n => (
+                        <div key={n} className={`${small ? 'h-[8px] text-[5px]' : 'h-[10px] text-[6px]'} flex items-center font-bold w-[8px] justify-end pr-[1px]`}>{n}</div>
+                      ))}
+                    </div>
+                    {Array.from({ length: 10 }).map((_, col) => (
+                      <div key={col} className="flex flex-col">
+                        {[0,1,2,3,4,5,6,7,8,9].map(row => (
+                          <div key={row} className={`${small ? 'w-[7px] h-[7px] m-[0.5px]' : 'w-[9px] h-[9px] m-[0.5px]'} rounded-full border border-gray-800 bg-white`}></div>
                         ))}
                       </div>
-                      <div className="text-[8px] mt-2 text-center italic">Fill in bubbles completely with #2 pencil</div>
+                    ))}
+                  </div>
+                </div>
+              );
+
+              // Reusable: mini sheet (for 20Q and 50Q)
+              const MiniSheet = ({ questions, sheetW, sheetH }: { questions: number; sheetW: string; sheetH: string }) => (
+                <div className="bg-white border border-black relative" style={{ width: sheetW, height: sheetH, padding: '6px' }}>
+                  {/* Corner markers */}
+                  <div className="absolute top-[4px] left-[4px] w-[5px] h-[5px] bg-black"></div>
+                  <div className="absolute top-[4px] right-[4px] w-[5px] h-[5px] bg-black"></div>
+                  <div className="absolute bottom-[4px] left-[4px] w-[5px] h-[5px] bg-black"></div>
+                  <div className="absolute bottom-[4px] right-[4px] w-[5px] h-[5px] bg-black"></div>
+
+                  {/* Header */}
+                  <div className="flex items-center justify-center gap-1 mb-1">
+                    <div className="w-[10px] h-[10px] bg-green-700 rounded-full flex items-center justify-center text-white text-[5px] font-bold">G</div>
+                    <span className="text-[7px] font-bold">Gordon College</span>
+                  </div>
+
+                  {/* Name/Date */}
+                  <div className="flex gap-1 mb-1 text-[5px]">
+                    <div className="flex-1">
+                      <span className="font-semibold">Name:</span>
+                      <div className="border-b border-black mt-[1px]"></div>
+                    </div>
+                    <div className="flex-1">
+                      <span className="font-semibold">Date:</span>
+                      <div className="border-b border-black mt-[1px]"></div>
+                    </div>
+                  </div>
+
+                  {/* ID Section */}
+                  <div className="mb-1">
+                    <IdSection small />
+                  </div>
+
+                  {/* Answer blocks */}
+                  {questions === 20 ? (
+                    <div className="flex gap-2 mt-1">
+                      <QBlock startQ={1} endQ={10} />
+                      <QBlock startQ={11} endQ={20} />
+                    </div>
+                  ) : (
+                    <div className="flex gap-1 mt-1">
+                      <div className="space-y-1">
+                        <QBlock startQ={1} endQ={10} />
+                        <QBlock startQ={11} endQ={20} />
+                        <QBlock startQ={21} endQ={30} />
+                      </div>
+                      <div className="space-y-1">
+                        <QBlock startQ={31} endQ={40} />
+                        <QBlock startQ={41} endQ={50} />
+                      </div>
                     </div>
                   )}
-
-                  {/* Answer Grid - ZipGrade Style */}
-                  <div className="text-center mb-2 text-xs font-bold">ZIPGRADE OMR</div>
-                  <div className="grid grid-cols-4 gap-x-2 gap-y-1">
-                    {Array.from({ length: Math.min(previewTemplate.numQuestions, 100) }).map((_, index) => {
-                      const qNum = index + 1;
-                      const choices = Array.from({ length: previewTemplate.choicesPerQuestion }).map((_, i) => 
-                        String.fromCharCode(65 + i) // A, B, C, D, E
-                      );
-                      
-                      // Add key marker every 10 questions
-                      const isKeyMarker = qNum % 10 === 1 && qNum > 1;
-                      
-                      return (
-                        <div key={qNum} className="flex items-center gap-1">
-                          {isKeyMarker && <div className="w-2 h-2 bg-black rounded-full absolute -ml-3"></div>}
-                          <span className="font-bold text-[10px] w-5 text-right">{qNum}</span>
-                          <div className="flex gap-0.5">
-                            {choices.map((choice) => (
-                              <div key={choice} className="w-4 h-4 rounded-full border border-black flex items-center justify-center text-[8px] font-bold">
-                                {choice}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {/* Footer with QR-style markers */}
-                  <div className="mt-4 pt-4 border-t-2 border-black flex justify-between items-center">
-                    <div className="w-8 h-8 bg-black"></div>
-                    <div className="text-center">
-                      <div className="font-bold text-xs">ZIPGRADE</div>
-                      <div className="text-[8px] text-gray-600">{previewTemplate.name}</div>
-                      <div className="text-[8px] text-gray-600">InstructorID: {previewTemplate.instructorId}</div>
-                    </div>
-                    <div className="w-8 h-8 bg-black"></div>
-                  </div>
-
-                  {/* Corner markers */}
-                  <div className="absolute top-0 left-0 w-8 h-8 bg-black"></div>
-                  <div className="absolute top-0 right-0 w-8 h-8 bg-black"></div>
-                  <div className="absolute bottom-0 left-0 w-8 h-8 bg-black"></div>
-                  <div className="absolute bottom-0 right-0 w-8 h-8 bg-black"></div>
                 </div>
-              </div>
-            )}
+              );
+
+              if (numQ === 20) {
+                // 20Q: 4 mini sheets in 2x2 grid
+                return (
+                  <div className="mx-auto bg-white border border-gray-400 shadow-lg" style={{ width: '420px', aspectRatio: '210/297', display: 'grid', gridTemplateColumns: '1fr 1fr', gridTemplateRows: '1fr 1fr' }}>
+                    <MiniSheet questions={20} sheetW="100%" sheetH="100%" />
+                    <MiniSheet questions={20} sheetW="100%" sheetH="100%" />
+                    <MiniSheet questions={20} sheetW="100%" sheetH="100%" />
+                    <MiniSheet questions={20} sheetW="100%" sheetH="100%" />
+                  </div>
+                );
+              } else if (numQ === 50) {
+                // 50Q: 2 side by side
+                return (
+                  <div className="mx-auto bg-white border border-gray-400 shadow-lg" style={{ width: '420px', aspectRatio: '210/297', display: 'grid', gridTemplateColumns: '1fr 1fr' }}>
+                    <MiniSheet questions={50} sheetW="100%" sheetH="100%" />
+                    <MiniSheet questions={50} sheetW="100%" sheetH="100%" />
+                  </div>
+                );
+              } else {
+                // 100Q: Full page
+                return (
+                  <div className="mx-auto bg-white border border-gray-400 shadow-lg relative" style={{ width: '420px', aspectRatio: '210/297', padding: '10px' }}>
+                    {/* Corner markers */}
+                    <div className="absolute top-[4px] left-[4px] w-[8px] h-[8px] bg-black"></div>
+                    <div className="absolute top-[4px] right-[4px] w-[8px] h-[8px] bg-black"></div>
+                    <div className="absolute bottom-[4px] left-[4px] w-[8px] h-[8px] bg-black"></div>
+                    <div className="absolute bottom-[4px] right-[4px] w-[8px] h-[8px] bg-black"></div>
+
+                    {/* Header */}
+                    <div className="flex items-center justify-center gap-1.5 mb-1.5">
+                      <div className="w-[14px] h-[14px] bg-green-700 rounded-full flex items-center justify-center text-white text-[7px] font-bold">G</div>
+                      <span className="text-[11px] font-bold">Gordon College</span>
+                    </div>
+
+                    {/* Name/Date */}
+                    <div className="flex gap-3 mb-2 text-[7px]">
+                      <div className="flex-[3]">
+                        <span className="font-bold">Name:</span>
+                        <div className="border-b border-black mt-[1px] ml-1"></div>
+                      </div>
+                      <div className="flex-[2]">
+                        <span className="font-bold">Date:</span>
+                        <div className="border-b border-black mt-[1px] ml-1"></div>
+                      </div>
+                    </div>
+
+                    {/* Top section: ID + Q41-50 + Q71-80 */}
+                    <div className="flex gap-2 mb-2 items-start">
+                      <div className="flex-shrink-0">
+                        <IdSection />
+                      </div>
+                      <div className="flex gap-2 mt-3">
+                        <QBlock startQ={41} endQ={50} />
+                        <QBlock startQ={71} endQ={80} />
+                      </div>
+                    </div>
+
+                    {/* Bottom: 4 cols x 2 rows */}
+                    <div className="flex gap-2 mb-1">
+                      <QBlock startQ={1} endQ={10} />
+                      <QBlock startQ={21} endQ={30} />
+                      <QBlock startQ={51} endQ={60} />
+                      <QBlock startQ={81} endQ={90} />
+                    </div>
+                    <div className="flex gap-2">
+                      <QBlock startQ={11} endQ={20} />
+                      <QBlock startQ={31} endQ={40} />
+                      <QBlock startQ={61} endQ={70} />
+                      <QBlock startQ={91} endQ={100} />
+                    </div>
+
+                    {/* Footer */}
+                    <div className="absolute bottom-[6px] left-0 right-0 text-center text-[5px] text-gray-500 italic">
+                      Do not fold, staple, or tear this answer sheet.
+                    </div>
+                  </div>
+                );
+              }
+            })()}
           </div>
 
           <DialogFooter>

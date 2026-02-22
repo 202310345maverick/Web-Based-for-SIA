@@ -99,6 +99,36 @@ export class ScanningService {
   }
 
   /**
+   * Get all scanned results for an exam (one-time fetch)
+   */
+  static async getScannedResultsByExamId(
+    examId: string
+  ): Promise<{ success: boolean; data?: ScannedResult[]; error?: string }> {
+    try {
+      const q = query(
+        collection(db, SCANNED_RESULTS_COLLECTION),
+        where('examId', '==', examId),
+        orderBy('scannedAt', 'desc')
+      );
+
+      const querySnapshot = await getDocs(q);
+      const results: ScannedResult[] = querySnapshot.docs.map((docSnap) => {
+        const data = docSnap.data();
+        return {
+          ...data,
+          scannedAt:
+            (data.scannedAt as Timestamp)?.toDate?.()?.toISOString() || data.scannedAt || '',
+        } as ScannedResult;
+      });
+
+      return { success: true, data: results };
+    } catch (error) {
+      console.error('Error fetching scanned results:', error);
+      return { success: false, error: (error as Error).message };
+    }
+  }
+
+  /**
    * Subscribe to real-time score updates for an exam
    */
   static subscribeToScores(

@@ -7,6 +7,7 @@ interface TemplateData {
   choicesPerQuestion: number;
   examName?: string;
   className?: string;
+  examCode?: string;
 }
 
 // Load GC logo
@@ -157,6 +158,15 @@ function drawMiniSheet(
     const centerX = startX + width / 2;
     doc.text('Gordon College', centerX, currentY, { align: 'center' });
     currentY += 4;
+  }
+  
+  // Exam Code (if provided)
+  if (template.examCode) {
+    doc.setFontSize(6);
+    doc.setFont('helvetica', 'normal');
+    const centerX = startX + width / 2;
+    doc.text(`Exam Code: ${template.examCode}`, centerX, currentY, { align: 'center' });
+    currentY += 3.5;
   }
   
   // Save the Y position for top black squares (aligned with Name/Date)
@@ -409,6 +419,14 @@ function drawFullSheet(
     doc.setFont('helvetica', 'bold');
     doc.text('Gordon College', startX + width / 2, currentY + 4, { align: 'center' });
     currentY += 10;
+  }
+
+  // Exam Code (if provided)
+  if (template.examCode) {
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Exam Code: ${template.examCode}`, startX + width / 2, currentY, { align: 'center' });
+    currentY += 5;
   }
 
   // ── FIELDS: Name ___ Date ___ ──

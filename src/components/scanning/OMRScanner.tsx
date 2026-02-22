@@ -11,6 +11,7 @@ import {
   X,
   Loader2,
   AlertCircle,
+  AlertTriangle,
   CheckCircle,
   Scan,
   Save,
@@ -21,7 +22,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { getExamById, Exam } from '@/services/examService';
 import { AnswerKeyService } from '@/services/answerKeyService';
 import { ScanningService } from '@/services/scanningService';
-import { getClassById, Class, Student } from '@/services/classService';
+import { getClassById, getClasses, Class, Student } from '@/services/classService';
 import { toast } from 'sonner';
 import { AnswerChoice } from '@/types/scanning';
 
@@ -61,6 +62,9 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   const [matchedStudent, setMatchedStudent] = useState<Student | null>(null);
   const [saving, setSaving] = useState(false);
   const [recentScans, setRecentScans] = useState<ScanResult[]>([]);
+  const [studentIdError, setStudentIdError] = useState<string | null>(null);
+  const [multipleAnswerQuestions, setMultipleAnswerQuestions] = useState<number[]>([]);
+  const [idDoubleShadeColumns, setIdDoubleShadeColumns] = useState<number[]>([]);
 
   // Load exam data
   useEffect(() => {
@@ -84,6 +88,22 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
               setClassData(cls);
             }
           }
+          
+          // Fallback: if no classId but has className, try to find class by name
+          if (!(examData as any).classId && examData.className && user) {
+            try {
+              const allClasses = await getClasses(user.id);
+              const matchedClass = allClasses.find(c => 
+                c.class_name === examData.className || 
+                `${c.class_name} - ${c.section_block}` === examData.className
+              );
+              if (matchedClass) {
+                setClassData(matchedClass);
+              }
+            } catch (e) {
+              console.warn('Could not find class by name:', e);
+            }
+          }
         }
       } catch (error) {
         console.error('Error loading exam:', error);
@@ -105,6 +125,18 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     };
   }, [stream]);
 
+  // Update video when stream changes
+  useEffect(() => {
+    if (stream && videoRef.current) {
+      videoRef.current.srcObject = stream;
+      videoRef.current.onloadedmetadata = () => {
+        videoRef.current?.play().catch(err => {
+          console.error('Error playing video:', err);
+        });
+      };
+    }
+  }, [stream]);
+
   // Start camera
   const startCamera = async () => {
     try {
@@ -121,7 +153,14 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream;
-        videoRef.current.play();
+        
+        // Ensure video plays when metadata is loaded
+        videoRef.current.onloadedmetadata = () => {
+          videoRef.current?.play().catch(err => {
+            console.error('Error playing video:', err);
+            toast.error('Could not start video playback');
+          });
+        };
       }
     } catch (error) {
       console.error('Error accessing camera:', error);
@@ -209,16 +248,34 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       
       // Process the image to detect filled bubbles
-      const { studentId, answers } = await detectBubbles(imageData, exam.num_items, exam.choices_per_item);
+      const { studentId, answers, multipleAnswers, idDoubleShades } = await detectBubbles(imageData, exam.num_items, exam.choices_per_item);
       
       setDetectedStudentId(studentId);
       setDetectedAnswers(answers);
+      setMultipleAnswerQuestions(multipleAnswers);
+      setIdDoubleShadeColumns(idDoubleShades);
       
-      // Try to match student
-      if (classData && studentId) {
+      // Validate student ID against class roster
+      let idError: string | null = null;
+      let matched: Student | null = null;
+      
+      if (idDoubleShades.length > 0) {
+        idError = `Student ID has multiple bubbles shaded in column(s): ${idDoubleShades.join(', ')}. Each column must have only one bubble shaded. Please ask the student to correct their answer sheet or manually edit the ID below.`;
+      } else if (!studentId || /^0+$/.test(studentId)) {
+        idError = 'No Student ID was detected. Please check if the student properly shaded their ID bubbles.';
+      } else if (!classData) {
+        idError = 'No class is linked to this exam. Please go to exam settings and assign a class before scanning.';
+      } else {
         const student = classData.students.find(s => s.student_id === studentId);
-        setMatchedStudent(student || null);
+        if (student) {
+          matched = student;
+        } else {
+          idError = `Student ID "${studentId}" is not registered in class "${classData.class_name} - ${classData.section_block}". Please verify the student is enrolled in this class or check if the ID was shaded correctly.`;
+        }
       }
+      
+      setMatchedStudent(matched);
+      setStudentIdError(idError);
       
       // Calculate score
       let score = 0;
@@ -256,9 +313,6 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   }, [capturedImage, exam, answerKey, classData]);
 
   // ─── CORNER MARKER DETECTION ───
-  // Finds the 4 black square alignment markers at the corners of the answer sheet.
-  // These markers are drawn by templatePdfGenerator.ts and are critical for
-  // mapping normalized template coordinates to actual pixel positions.
   const findCornerMarkers = (
     binary: Uint8Array,
     width: number,
@@ -280,7 +334,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       let bestX = (rx1 + rx2) / 2;
       let bestY = (ry1 + ry2) / 2;
       let bestDensity = 0;
-      const step = Math.max(2, Math.floor(markerSize / 3));
+      const step = Math.max(1, Math.floor(markerSize / 5));
 
       for (let y = ry1; y <= ry2 - markerSize; y += step) {
         for (let x = rx1; x <= rx2 - markerSize; x += step) {
@@ -313,7 +367,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     const bl = findMarkerInRegion(0, height - cH, cW, height);
     const br = findMarkerInRegion(width - cW, height - cH, width, height);
 
-    const minDensityThreshold = 0.5;
+    const minDensityThreshold = 0.4;
     return {
       found:
         tl.density > minDensityThreshold &&
@@ -328,8 +382,6 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   };
 
   // ─── COORDINATE MAPPING ───
-  // Maps normalized (0–1) coords within the marker frame to pixel positions.
-  // Uses bilinear interpolation to correct for rotation/skew.
   const mapToPixel = (
     markers: {
       topLeft: { x: number; y: number };
@@ -351,16 +403,6 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   };
 
   // ─── TEMPLATE LAYOUT DEFINITIONS ───
-  // All positions are normalized to the marker-center frame:
-  //   (0, 0) = center of top-left marker
-  //   (1, 1) = center of bottom-right marker
-  // Derived by tracing through templatePdfGenerator.ts exact mm measurements.
-  //
-  // For mini sheets (20Q, 50Q) the top markers shift with the header,
-  // so normalized coords are stable whether or not the logo loaded.
-  // For the 100Q full sheet, top markers are at a fixed position;
-  // the layout below assumes the logo WAS loaded (the common case).
-
   interface AnswerBlock {
     startQ: number;
     endQ: number;
@@ -458,12 +500,20 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       };
     }
 
-    // 100-question full page  210 × 297 mm
-    // Marker centers: TL (6.5, 6.5)  BR (203.5, 217)  →  frame 197 × 210.5 mm
+    // 100‑question full page  210 × 297 mm
+    // Marker centers: TL (3, 3)  BR (200, 213.5)  →  frame 197 × 210.5 mm
+    //
+    // CALIBRATION: The firstBubbleNX values are empirically corrected.
+    // The PDF draws bubbles at bx + numW (numW=12mm from block left edge).
+    // The original NX values were computed from bx alone, causing a leftward
+    // shift of ~1 bubble spacing. Adding 5.0mm corrects this.
     const fw = 197, fh = 210.5;
+    const xCorrection = 5.0;  // mm – empirical shift to align with actual bubble centers
     return {
       id: {
+        // idStartX=21 page mm → (21 - 6.5) = 14.5 mm from TL marker center
         firstColNX: 14.5 / fw,
+        // idBubbleY=48 page mm (with logo) → (48 - 6.5) = 41.5 mm from TL marker center
         firstRowNY: 41.5 / fh,
         colSpacingNX: 4.5 / fw,
         rowSpacingNY: 4.8 / fh,
@@ -472,55 +522,75 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         // Top row (beside ID section)
         {
           startQ: 41, endQ: 50,
-          firstBubbleNX: 91.85 / fw, firstBubbleNY: 46 / fh,
-          bubbleSpacingNX: 5.0 / fw, rowSpacingNY: 4.8 / fh,
+          firstBubbleNX: (83.35 + xCorrection) / fw,
+          firstBubbleNY: 45 / fh,
+          bubbleSpacingNX: 5.0 / fw,
+          rowSpacingNY: 4.8 / fh,
         },
         {
           startQ: 71, endQ: 80,
-          firstBubbleNX: 157.35 / fw, firstBubbleNY: 46 / fh,
-          bubbleSpacingNX: 5.0 / fw, rowSpacingNY: 4.8 / fh,
+          firstBubbleNX: (148.85 + xCorrection) / fw,
+          firstBubbleNY: 45 / fh,
+          bubbleSpacingNX: 5.0 / fw,
+          rowSpacingNY: 4.8 / fh,
         },
         // Bottom grid – row 0
         {
           startQ: 1, endQ: 10,
-          firstBubbleNX: 28.86 / fw, firstBubbleNY: 100 / fh,
-          bubbleSpacingNX: 5.0 / fw, rowSpacingNY: 4.8 / fh,
+          firstBubbleNX: (20.36 + xCorrection) / fw,
+          firstBubbleNY: 99 / fh,
+          bubbleSpacingNX: 5.0 / fw,
+          rowSpacingNY: 4.8 / fh,
         },
         {
           startQ: 21, endQ: 30,
-          firstBubbleNX: 73.02 / fw, firstBubbleNY: 100 / fh,
-          bubbleSpacingNX: 5.0 / fw, rowSpacingNY: 4.8 / fh,
+          firstBubbleNX: (64.52 + xCorrection) / fw,
+          firstBubbleNY: 99 / fh,
+          bubbleSpacingNX: 5.0 / fw,
+          rowSpacingNY: 4.8 / fh,
         },
         {
           startQ: 51, endQ: 60,
-          firstBubbleNX: 117.18 / fw, firstBubbleNY: 100 / fh,
-          bubbleSpacingNX: 5.0 / fw, rowSpacingNY: 4.8 / fh,
+          firstBubbleNX: (108.68 + xCorrection) / fw,
+          firstBubbleNY: 99 / fh,
+          bubbleSpacingNX: 5.0 / fw,
+          rowSpacingNY: 4.8 / fh,
         },
         {
           startQ: 81, endQ: 90,
-          firstBubbleNX: 161.34 / fw, firstBubbleNY: 100 / fh,
-          bubbleSpacingNX: 5.0 / fw, rowSpacingNY: 4.8 / fh,
+          firstBubbleNX: (152.84 + xCorrection) / fw,
+          firstBubbleNY: 99 / fh,
+          bubbleSpacingNX: 5.0 / fw,
+          rowSpacingNY: 4.8 / fh,
         },
         // Bottom grid – row 1
         {
           startQ: 11, endQ: 20,
-          firstBubbleNX: 28.86 / fw, firstBubbleNY: 156 / fh,
-          bubbleSpacingNX: 5.0 / fw, rowSpacingNY: 4.8 / fh,
+          firstBubbleNX: (20.36 + xCorrection) / fw,
+          firstBubbleNY: 155 / fh,
+          bubbleSpacingNX: 5.0 / fw,
+          rowSpacingNY: 4.8 / fh,
         },
         {
           startQ: 31, endQ: 40,
-          firstBubbleNX: 73.02 / fw, firstBubbleNY: 156 / fh,
-          bubbleSpacingNX: 5.0 / fw, rowSpacingNY: 4.8 / fh,
+          firstBubbleNX: (64.52 + xCorrection) / fw,
+          firstBubbleNY: 155 / fh,
+          bubbleSpacingNX: 5.0 / fw,
+          rowSpacingNY: 4.8 / fh,
         },
         {
           startQ: 61, endQ: 70,
-          firstBubbleNX: 117.18 / fw, firstBubbleNY: 156 / fh,
-          bubbleSpacingNX: 5.0 / fw, rowSpacingNY: 4.8 / fh,
+          firstBubbleNX: (108.68 + xCorrection) / fw,
+          firstBubbleNY: 155 / fh,
+          bubbleSpacingNX: 5.0 / fw,
+          rowSpacingNY: 4.8 / fh,
         },
         {
           startQ: 91, endQ: 100,
-          firstBubbleNX: 161.34 / fw, firstBubbleNY: 156 / fh,
-          bubbleSpacingNX: 5.0 / fw, rowSpacingNY: 4.8 / fh,
+          firstBubbleNX: (152.84 + xCorrection) / fw,
+          firstBubbleNY: 155 / fh,
+          bubbleSpacingNX: 5.0 / fw,
+          rowSpacingNY: 4.8 / fh,
         },
       ],
       bubbleDiameterNX: 3.8 / fw,
@@ -533,7 +603,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     imageData: ImageData,
     numQuestions: number,
     choicesPerQuestion: number
-  ): Promise<{ studentId: string; answers: string[] }> => {
+  ): Promise<{ studentId: string; answers: string[]; multipleAnswers: number[]; idDoubleShades: number[] }> => {
     const { data, width, height } = imageData;
 
     // 1. Convert to grayscale
@@ -554,7 +624,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       }
     }
 
-    // 3. Adaptive threshold using integral image (much faster than per-pixel block mean)
+    // 3. Adaptive threshold using integral image
     const globalThreshold = calculateOtsuThreshold(grayscale);
     const binary = new Uint8Array(width * height);
     const halfBlock = Math.max(8, Math.floor(Math.min(width, height) / 40));
@@ -573,7 +643,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
 
         const area = (x2 - x1 + 1) * (y2 - y1 + 1);
         const localMean = sum / area;
-        const threshold = Math.min(globalThreshold, localMean - 12);
+        const threshold = Math.min(globalThreshold, localMean - 8);
         binary[y * width + x] = grayscale[y * width + x] < threshold ? 1 : 0;
       }
     }
@@ -584,26 +654,26 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       'TL:', Math.round(markers.topLeft.x), Math.round(markers.topLeft.y),
       'BR:', Math.round(markers.bottomRight.x), Math.round(markers.bottomRight.y));
 
-    // 5. Fallback: use image bounds with 5 % margin if markers not detected
+    // 5. Fallback: use image bounds with 2% margin
     const effectiveMarkers = markers.found
       ? markers
       : {
-          topLeft: { x: width * 0.05, y: height * 0.05 },
-          topRight: { x: width * 0.95, y: height * 0.05 },
-          bottomLeft: { x: width * 0.05, y: height * 0.95 },
-          bottomRight: { x: width * 0.95, y: height * 0.95 },
+          topLeft: { x: width * 0.02, y: height * 0.02 },
+          topRight: { x: width * 0.98, y: height * 0.02 },
+          bottomLeft: { x: width * 0.02, y: height * 0.98 },
+          bottomRight: { x: width * 0.98, y: height * 0.98 },
         };
 
     // 6. Get template layout for this exam's question count
     const layout = getTemplateLayout(numQuestions);
 
     // 7. Detect student ID and answers
-    const studentId = detectStudentIdFromImage(binary, width, height, effectiveMarkers, layout);
-    const answers = detectAnswersFromImage(
+    const { studentId, doubleShadeColumns } = detectStudentIdFromImage(binary, width, height, effectiveMarkers, layout);
+    const { answers, multipleAnswers } = detectAnswersFromImage(
       binary, width, height, effectiveMarkers, layout, numQuestions, choicesPerQuestion
     );
 
-    return { studentId, answers };
+    return { studentId, answers, multipleAnswers, idDoubleShades: doubleShadeColumns };
   };
 
   // ─── OTSU'S THRESHOLD ───
@@ -629,8 +699,6 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   };
 
   // ─── BUBBLE SAMPLING ───
-  // Samples the fill ratio (0–1) of an elliptical bubble centred at (cx, cy).
-  // Only the inner 75 % of the bubble is sampled to avoid the printed border ring.
   const sampleBubbleAt = (
     binary: Uint8Array,
     imgW: number,
@@ -660,7 +728,6 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   };
 
   // ─── DETECT STUDENT ID ───
-  // The ID grid is always 10 columns × 10 rows (digits 0–9).
   const detectStudentIdFromImage = (
     binary: Uint8Array,
     width: number,
@@ -672,41 +739,66 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       bottomRight: { x: number; y: number };
     },
     layout: TemplateLayout
-  ): string => {
+  ): { studentId: string; doubleShadeColumns: number[] } => {
     const { id } = layout;
     const idDigits: number[] = [];
+    const doubleShadeColumns: number[] = [];
 
     const frameW = markers.topRight.x - markers.topLeft.x;
     const frameH = markers.bottomLeft.y - markers.topLeft.y;
     const bubbleRX = (layout.bubbleDiameterNX * frameW) / 2;
     const bubbleRY = (layout.bubbleDiameterNY * frameH) / 2;
 
+    // Use smaller radius for ID bubbles (they are 3.5mm vs 3.8mm for answers)
+    const idBubbleRX = bubbleRX * (3.5 / 3.8);
+    const idBubbleRY = bubbleRY * (3.5 / 3.8);
+
+    console.log('[ID] BubbleR:', idBubbleRX.toFixed(1), 'x', idBubbleRY.toFixed(1));
+
+    const ID_FILL_THRESHOLD = 0.25;
+    const ID_DOUBLE_SHADE_RATIO = 0.55; // If 2nd highest fill >= 55% of max, it's a double shade
+
     for (let col = 0; col < 9; col++) {
       let maxFill = 0;
       let detectedDigit = 0;
       let hasDetection = false;
+      const fills: number[] = [];
 
-      for (let row = 0; row < 9; row++) {
+      for (let row = 0; row < 10; row++) {
         const nx = id.firstColNX + col * id.colSpacingNX;
         const ny = id.firstRowNY + row * id.rowSpacingNY;
         const { px, py } = mapToPixel(markers, nx, ny);
 
-        const fill = sampleBubbleAt(binary, width, height, px, py, bubbleRX, bubbleRY);
-        if (fill > maxFill && fill > 0.25) {
+        const fill = sampleBubbleAt(binary, width, height, px, py, idBubbleRX, idBubbleRY);
+        fills.push(fill);
+        if (fill > maxFill && fill > ID_FILL_THRESHOLD) {
           maxFill = fill;
           detectedDigit = row;
           hasDetection = true;
         }
       }
+
+      // Check for double-shade: count how many bubbles are significantly filled
+      if (maxFill > ID_FILL_THRESHOLD) {
+        const filledCount = fills.filter(
+          f => f > ID_FILL_THRESHOLD && f >= maxFill * ID_DOUBLE_SHADE_RATIO
+        ).length;
+        if (filledCount > 1) {
+          doubleShadeColumns.push(col + 1); // 1-based column number
+          console.log(`[ID] ⚠️ Col ${col} has DOUBLE SHADE (${filledCount} bubbles filled)`);
+        }
+      }
+
+      console.log(`[ID] Col ${col}: fills=[${fills.map(f => f.toFixed(2)).join(',')}] → ${hasDetection ? detectedDigit : '?'} (max=${maxFill.toFixed(2)})`);
       idDigits.push(hasDetection ? detectedDigit : 0);
     }
 
     const raw = idDigits.join('');
-    return raw.replace(/^0+(?=\d)/, '') || '0';
+    console.log('[ID] Raw digits:', raw, doubleShadeColumns.length > 0 ? `(double-shade in columns: ${doubleShadeColumns.join(',')})` : '');
+    return { studentId: raw, doubleShadeColumns };
   };
 
   // ─── DETECT ANSWERS ───
-  // Uses the template's answer-block layout (varies per 20 / 50 / 100 Q).
   const detectAnswersFromImage = (
     binary: Uint8Array,
     width: number,
@@ -720,8 +812,9 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     layout: TemplateLayout,
     numQuestions: number,
     choicesPerQuestion: number
-  ): string[] => {
+  ): { answers: string[]; multipleAnswers: number[] } => {
     const answers = new Array<string>(numQuestions).fill('');
+    const multipleAnswers: number[] = [];
     const choiceLabels = 'ABCDEFGH'.slice(0, choicesPerQuestion).split('');
 
     const frameW = markers.topRight.x - markers.topLeft.x;
@@ -729,13 +822,19 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     const bubbleRX = (layout.bubbleDiameterNX * frameW) / 2;
     const bubbleRY = (layout.bubbleDiameterNY * frameH) / 2;
 
+    // Threshold for considering a bubble as "filled"
+    const FILL_THRESHOLD = 0.20;
+    // If a second bubble has fill >= this ratio of the max, it's considered a multiple answer
+    const MULTI_ANSWER_RATIO = 0.45;
+
     for (const block of layout.answerBlocks) {
       for (let q = block.startQ; q <= block.endQ && q <= numQuestions; q++) {
-        const qIndex = q - 1; // 0-based
+        const qIndex = q - 1;
         const rowInBlock = q - block.startQ;
 
         let maxFill = 0;
         let selectedChoice = '';
+        const fills: { choice: string; fill: number }[] = [];
 
         for (let c = 0; c < choicesPerQuestion; c++) {
           const nx = block.firstBubbleNX + c * block.bubbleSpacingNX;
@@ -743,15 +842,28 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
           const { px, py } = mapToPixel(markers, nx, ny);
 
           const fill = sampleBubbleAt(binary, width, height, px, py, bubbleRX, bubbleRY);
-          if (fill > maxFill && fill > 0.20) {
+          fills.push({ choice: choiceLabels[c], fill });
+          if (fill > maxFill && fill > FILL_THRESHOLD) {
             maxFill = fill;
             selectedChoice = choiceLabels[c];
           }
         }
+
+        // Check if multiple bubbles are filled for this question
+        if (maxFill > FILL_THRESHOLD) {
+          const filledBubbles = fills.filter(
+            f => f.fill > FILL_THRESHOLD && f.fill >= maxFill * MULTI_ANSWER_RATIO
+          );
+          if (filledBubbles.length > 1) {
+            multipleAnswers.push(q); // Store 1-based question number
+            console.log(`[MULTI] Q${q}: ${filledBubbles.map(f => `${f.choice}=${f.fill.toFixed(2)}`).join(', ')} | all: ${fills.map(f => `${f.choice}=${f.fill.toFixed(2)}`).join(', ')}`);
+          }
+        }
+
         answers[qIndex] = selectedChoice;
       }
     }
-    return answers;
+    return { answers, multipleAnswers };
   };
 
   // Calculate letter grade
@@ -778,6 +890,30 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   // Save scan result
   const saveScanResult = async () => {
     if (!scanResult || !user || !exam) return;
+
+    // Block saving if student ID has errors
+    if (studentIdError) {
+      toast.error('Cannot save: Student ID is not registered in this class. Please correct the Student ID first.');
+      return;
+    }
+    if (idDoubleShadeColumns.length > 0) {
+      toast.error('Cannot save: Student ID has columns with multiple bubbles shaded. Please correct the Student ID first.');
+      return;
+    }
+
+    // Block saving if no class is linked or student is not in the class
+    if (!classData) {
+      toast.error('Cannot save: No class is linked to this exam. Please assign a class to the exam first.');
+      setStudentIdError('No class is linked to this exam. Please go to exam settings and assign a class before scanning.');
+      return;
+    }
+
+    const student = classData.students.find(s => s.student_id === detectedStudentId);
+    if (!student) {
+      toast.error(`Cannot save: Student ID "${detectedStudentId}" is not registered in class "${classData.class_name} - ${classData.section_block}".`);
+      setStudentIdError(`Student ID "${detectedStudentId}" is not registered in class "${classData.class_name} - ${classData.section_block}". Please verify the student is enrolled in this class.`);
+      return;
+    }
     
     setSaving(true);
     try {
@@ -802,6 +938,9 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         setDetectedAnswers([]);
         setDetectedStudentId('');
         setMatchedStudent(null);
+        setStudentIdError(null);
+        setMultipleAnswerQuestions([]);
+        setIdDoubleShadeColumns([]);
         setCapturedImage(null);
         setMode('select');
       } else {
@@ -1047,20 +1186,104 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       {/* Mode: Results */}
       {mode === 'results' && scanResult && (
         <div className="space-y-6">
+          {/* Student ID Double Shade Error */}
+          {idDoubleShadeColumns.length > 0 && (
+            <Card className="p-4 border-orange-300 bg-orange-50">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-orange-600 mt-0.5 flex-shrink-0" />
+                <div>
+                  <h4 className="font-semibold text-orange-800">Multiple Bubbles Shaded in Student ID</h4>
+                  <p className="text-sm text-orange-700 mt-1">
+                    Column(s) <strong>{idDoubleShadeColumns.join(', ')}</strong> of the Student ID have more than one bubble shaded. Each column must have only <strong>one digit</strong> selected.
+                  </p>
+                  <p className="text-xs text-orange-600 mt-2">
+                    Please ask the student to properly shade only one bubble per column, or manually correct the Student ID below.
+                  </p>
+                </div>
+              </div>
+            </Card>
+          )}
+
+          {/* Student ID Not Found Error */}
+          {studentIdError && idDoubleShadeColumns.length === 0 && (
+            <Card className="p-4 border-red-300 bg-red-50">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-red-600 mt-0.5 flex-shrink-0" />
+                <div>
+                  <h4 className="font-semibold text-red-800">Student ID Not Found</h4>
+                  <p className="text-sm text-red-700 mt-1">{studentIdError}</p>
+                  <p className="text-xs text-red-600 mt-2">
+                    You must correct the Student ID before saving. Edit the ID field below or discard and re-scan.
+                  </p>
+                </div>
+              </div>
+            </Card>
+          )}
+
+          {/* Multiple Answers Warning */}
+          {multipleAnswerQuestions.length > 0 && (
+            <Card className="p-4 border-yellow-300 bg-yellow-50">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-yellow-600 mt-0.5 flex-shrink-0" />
+                <div>
+                  <h4 className="font-semibold text-yellow-800">Multiple Answers Detected</h4>
+                  <p className="text-sm text-yellow-700 mt-1">
+                    The following question(s) have more than one bubble shaded: <strong>
+                    {multipleAnswerQuestions.map(q => `#${q}`).join(', ')}
+                    </strong>
+                  </p>
+                  <p className="text-xs text-yellow-600 mt-2">
+                    Only one answer per question is allowed. The system selected the darkest bubble, but please verify and correct if needed. Remind the student to shade only one bubble per question.
+                  </p>
+                </div>
+              </div>
+            </Card>
+          )}
+
           {/* Score Summary */}
           <Card className="p-6">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
-                <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center">
-                  <User className="w-8 h-8 text-gray-600" />
+                <div className={`w-16 h-16 rounded-full flex items-center justify-center ${
+                  (studentIdError || idDoubleShadeColumns.length > 0) ? 'bg-red-100' : matchedStudent ? 'bg-green-100' : 'bg-gray-100'
+                }`}>
+                  <User className={`w-8 h-8 ${
+                    (studentIdError || idDoubleShadeColumns.length > 0) ? 'text-red-600' : matchedStudent ? 'text-green-600' : 'text-gray-600'
+                  }`} />
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
                     <input
                       type="text"
                       value={detectedStudentId}
-                      onChange={(e) => setDetectedStudentId(e.target.value)}
-                      className="text-xl font-bold text-gray-900 bg-transparent border-b border-transparent hover:border-gray-300 focus:border-[#1a472a] focus:outline-none transition-colors"
+                      onChange={(e) => {
+                        const newId = e.target.value;
+                        setDetectedStudentId(newId);
+                        // Clear double-shade error when user manually edits
+                        setIdDoubleShadeColumns([]);
+                        // Re-validate student ID on change
+                        if (!newId || /^0+$/.test(newId)) {
+                          setStudentIdError('No Student ID provided. Please enter a valid Student ID.');
+                          setMatchedStudent(null);
+                        } else if (!classData) {
+                          setStudentIdError('No class is linked to this exam. Please go to exam settings and assign a class before scanning.');
+                          setMatchedStudent(null);
+                        } else {
+                          const student = classData.students.find(s => s.student_id === newId);
+                          if (student) {
+                            setMatchedStudent(student);
+                            setStudentIdError(null);
+                          } else {
+                            setMatchedStudent(null);
+                            setStudentIdError(`Student ID "${newId}" is not registered in class "${classData.class_name} - ${classData.section_block}". Please verify the student is enrolled in this class or check if the ID was shaded correctly.`);
+                          }
+                        }
+                      }}
+                      className={`text-xl font-bold bg-transparent border-b transition-colors focus:outline-none ${
+                        (studentIdError || idDoubleShadeColumns.length > 0)
+                          ? 'text-red-700 border-red-300 hover:border-red-400 focus:border-red-500'
+                          : 'text-gray-900 border-transparent hover:border-gray-300 focus:border-[#1a472a]'
+                      }`}
                       placeholder="Enter Student ID"
                     />
                     {matchedStudent && (
@@ -1087,7 +1310,6 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
           <Card className="p-6">
             <h3 className="text-lg font-bold text-gray-900 mb-4">Answer Comparison</h3>
             
-            {/* Split into two rows for cleaner display */}
             {(() => {
               const halfPoint = Math.ceil(detectedAnswers.length / 2);
               const firstRow = detectedAnswers.slice(0, halfPoint);
@@ -1095,15 +1317,15 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
               
               return (
                 <div className="space-y-6">
-                  {/* First row: Questions 1-10 (or first half) */}
                   <div>
                     <p className="text-sm font-medium text-gray-500 mb-2">Questions 1-{halfPoint}</p>
                     <div className="grid grid-cols-5 sm:grid-cols-10 gap-3">
                       {firstRow.map((answer, i) => {
                         const isCorrect = answerKey[i] && answer.toUpperCase() === answerKey[i].toUpperCase();
+                        const hasMultiple = multipleAnswerQuestions.includes(i + 1);
                         return (
                           <div key={i} className="text-center">
-                            <span className="text-xs text-gray-500 block mb-1">{i + 1}</span>
+                            <span className={`text-xs block mb-1 ${hasMultiple ? 'text-yellow-600 font-bold' : 'text-gray-500'}`}>{i + 1}</span>
                             <div className="relative">
                               <input
                                 type="text"
@@ -1111,13 +1333,18 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
                                 onChange={(e) => editAnswer(i, e.target.value)}
                                 maxLength={1}
                                 className={`w-10 h-10 text-center font-bold rounded-lg border-2 transition-colors ${
-                                  isCorrect 
-                                    ? 'border-green-500 bg-green-50 text-green-700' 
-                                    : answer 
-                                      ? 'border-red-500 bg-red-50 text-red-700'
-                                      : 'border-gray-300 bg-gray-50 text-gray-500'
+                                  hasMultiple
+                                    ? 'border-yellow-500 bg-yellow-50 text-yellow-700 ring-2 ring-yellow-300'
+                                    : isCorrect 
+                                      ? 'border-green-500 bg-green-50 text-green-700' 
+                                      : answer 
+                                        ? 'border-red-500 bg-red-50 text-red-700'
+                                        : 'border-gray-300 bg-gray-50 text-gray-500'
                                 }`}
                               />
+                              {hasMultiple && (
+                                <AlertTriangle className="absolute -top-2 -right-2 w-4 h-4 text-yellow-600" />
+                              )}
                               {answerKey[i] && !isCorrect && (
                                 <span className="absolute -bottom-4 left-1/2 -translate-x-1/2 text-[10px] text-green-600 font-medium">
                                   {answerKey[i]}
@@ -1130,7 +1357,6 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
                     </div>
                   </div>
                   
-                  {/* Second row: Questions 11-20 (or second half) */}
                   {secondRow.length > 0 && (
                     <div className="pt-4 border-t">
                       <p className="text-sm font-medium text-gray-500 mb-2">Questions {halfPoint + 1}-{detectedAnswers.length}</p>
@@ -1138,9 +1364,10 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
                         {secondRow.map((answer, i) => {
                           const actualIndex = halfPoint + i;
                           const isCorrect = answerKey[actualIndex] && answer.toUpperCase() === answerKey[actualIndex].toUpperCase();
+                          const hasMultiple = multipleAnswerQuestions.includes(actualIndex + 1);
                           return (
                             <div key={actualIndex} className="text-center">
-                              <span className="text-xs text-gray-500 block mb-1">{actualIndex + 1}</span>
+                              <span className={`text-xs block mb-1 ${hasMultiple ? 'text-yellow-600 font-bold' : 'text-gray-500'}`}>{actualIndex + 1}</span>
                               <div className="relative">
                                 <input
                                   type="text"
@@ -1148,13 +1375,18 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
                                   onChange={(e) => editAnswer(actualIndex, e.target.value)}
                                   maxLength={1}
                                   className={`w-10 h-10 text-center font-bold rounded-lg border-2 transition-colors ${
-                                    isCorrect 
-                                      ? 'border-green-500 bg-green-50 text-green-700' 
-                                      : answer 
-                                        ? 'border-red-500 bg-red-50 text-red-700'
-                                        : 'border-gray-300 bg-gray-50 text-gray-500'
+                                    hasMultiple
+                                      ? 'border-yellow-500 bg-yellow-50 text-yellow-700 ring-2 ring-yellow-300'
+                                      : isCorrect 
+                                        ? 'border-green-500 bg-green-50 text-green-700' 
+                                        : answer 
+                                          ? 'border-red-500 bg-red-50 text-red-700'
+                                          : 'border-gray-300 bg-gray-50 text-gray-500'
                                   }`}
                                 />
+                                {hasMultiple && (
+                                  <AlertTriangle className="absolute -top-2 -right-2 w-4 h-4 text-yellow-600" />
+                                )}
                                 {answerKey[actualIndex] && !isCorrect && (
                                   <span className="absolute -bottom-4 left-1/2 -translate-x-1/2 text-[10px] text-green-600 font-medium">
                                     {answerKey[actualIndex]}
@@ -1170,7 +1402,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
                 </div>
               );
             })()}
-            <div className="flex items-center gap-4 mt-6 pt-4 border-t text-sm">
+            <div className="flex items-center gap-4 mt-6 pt-4 border-t text-sm flex-wrap">
               <div className="flex items-center gap-2">
                 <div className="w-4 h-4 bg-green-100 border-2 border-green-500 rounded" />
                 <span className="text-gray-600">Correct</span>
@@ -1179,15 +1411,26 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
                 <div className="w-4 h-4 bg-red-100 border-2 border-red-500 rounded" />
                 <span className="text-gray-600">Incorrect (correct answer shown below)</span>
               </div>
+              {multipleAnswerQuestions.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 bg-yellow-100 border-2 border-yellow-500 rounded relative">
+                    <AlertTriangle className="absolute -top-1 -right-1 w-3 h-3 text-yellow-600" />
+                  </div>
+                  <span className="text-yellow-700">Multiple answers detected</span>
+                </div>
+              )}
             </div>
           </Card>
 
-          {/* Action Buttons */}
           <div className="flex justify-center gap-4">
             <Button variant="outline" onClick={() => {
               setScanResult(null);
               setDetectedAnswers([]);
               setDetectedStudentId('');
+              setMatchedStudent(null);
+              setStudentIdError(null);
+              setMultipleAnswerQuestions([]);
+              setIdDoubleShadeColumns([]);
               setCapturedImage(null);
               setMode('select');
             }}>
@@ -1195,9 +1438,19 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
               Discard & Scan Again
             </Button>
             <Button 
-              onClick={saveScanResult}
-              disabled={saving}
-              className="bg-[#1a472a] hover:bg-[#2d6b47]"
+              onClick={() => {
+                if (idDoubleShadeColumns.length > 0) {
+                  toast.error('Student ID has multiple bubbles shaded. Please correct the ID before saving.');
+                  return;
+                }
+                if (studentIdError) {
+                  toast.error('Please correct the Student ID before saving. The student must be registered in this class.');
+                  return;
+                }
+                saveScanResult();
+              }}
+              disabled={saving || !!studentIdError || idDoubleShadeColumns.length > 0}
+              className={`${(studentIdError || idDoubleShadeColumns.length > 0) ? 'bg-gray-400 cursor-not-allowed' : 'bg-[#1a472a] hover:bg-[#2d6b47]'}`}
             >
               {saving ? (
                 <>

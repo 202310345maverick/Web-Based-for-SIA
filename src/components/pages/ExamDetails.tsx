@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { getExamById, Exam } from "@/services/examService";
 import { AnswerKeyService } from "@/services/answerKeyService";
+import { ScanningService } from "@/services/scanningService";
 import { useAuth } from "@/contexts/AuthContext";
 import { db, auth } from "@/lib/firebase";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
@@ -50,6 +51,7 @@ export default function ExamDetails({ params }: ExamDetailsProps) {
   const { user } = useAuth();
   const [exam, setExam] = useState<Exam | null>(null);
   const [loading, setLoading] = useState(true);
+  const [scannedPaperCount, setScannedPaperCount] = useState(0);
   const [answerKeyStatus, setAnswerKeyStatus] = useState<AnswerKeyStatus>({
     total: 0,
     completed: 0,
@@ -89,6 +91,16 @@ export default function ExamDetails({ params }: ExamDetailsProps) {
             }
           } catch (error) {
             console.error("Error fetching answer key:", error);
+          }
+
+          // Fetch scanned results count
+          try {
+            const scannedResult = await ScanningService.getScannedResultsByExamId(params.id);
+            if (scannedResult.success && scannedResult.data) {
+              setScannedPaperCount(scannedResult.data.filter(r => !r.isNullId).length);
+            }
+          } catch (error) {
+            console.error("Error fetching scanned results:", error);
           }
         }
       } catch (error) {
@@ -193,12 +205,24 @@ export default function ExamDetails({ params }: ExamDetailsProps) {
       
       // Generate and download PDF
       toast.info('📄 Generating PDF...');
+      
+      // Generate exam code: first 2 letters of class + last 2 letters of exam name + 2 digits of day
+      const classPrefix = exam.className 
+        ? exam.className.substring(0, 2).toUpperCase()
+        : 'XX';
+      const examSuffix = exam.title.length >= 2
+        ? exam.title.substring(exam.title.length - 2).toUpperCase().replace(/[^A-Z]/g, '')
+        : exam.title.substring(0, 2).toUpperCase().replace(/[^A-Z]/g, '');
+      const dayDigits = new Date().getDate().toString().padStart(2, '0');
+      const examCode = `${classPrefix}${examSuffix}${dayDigits}`;
+      
       await generateTemplatePDF({
         name: exam.title,
         description: exam.subject || 'Answer Sheet Template',
         numQuestions: newTemplate.numQuestions,
         choicesPerQuestion: newTemplate.choicesPerQuestion,
         examName: exam.title,
+        examCode: examCode,
       });
       
       setShowCreateTemplate(false);
@@ -362,7 +386,7 @@ export default function ExamDetails({ params }: ExamDetailsProps) {
               Papers Scanned
             </p>
             <p className="text-foreground">
-              {exam.generated_sheets.length} papers
+              {scannedPaperCount} papers
             </p>
           </div>
         </div>
