@@ -53,6 +53,7 @@ export default function Exams() {
   const [search, setSearch] = useState("");
   const [archiveId, setArchiveId] = useState<string | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [duplicateExamData, setDuplicateExamData] = useState<ExamFormData | null>(null);
 
   useEffect(() => {
     const title = searchParams.get("title");
@@ -152,6 +153,17 @@ export default function Exams() {
   }, [user]);
 
   const handleCreateExam = async (formData: ExamFormData) => {
+    // Check for duplicates first
+    const isDuplicate = exams.some(
+      (e) => e.title.toLowerCase().trim() === formData.name.toLowerCase().trim()
+    );
+
+    if (isDuplicate && !duplicateExamData) {
+      setDuplicateExamData(formData);
+      setShowCreateModal(false);
+      return;
+    }
+
     try {
       if (!user?.id) {
         toast.error("You must be logged in to create an exam");
@@ -411,6 +423,42 @@ export default function Exams() {
               className="bg-primary text-primary-foreground hover:bg-primary/90"
             >
               Archive
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Duplicate Batch Warning Dialog */}
+      <AlertDialog 
+        open={!!duplicateExamData} 
+        onOpenChange={(open) => !open && setDuplicateExamData(null)}
+      >
+        <AlertDialogContent className="border-2 border-warning">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-warning">
+              <Archive className="w-5 h-5" />
+              Duplicate Batch Detected
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-foreground">
+              An exam with the title <strong className="text-primary">"{duplicateExamData?.name}"</strong> already exists in your records.
+              <br /><br />
+              Creating multiple exams with the same name can lead to confusion during grading and reporting. Are you sure you want to proceed with creating this duplicate batch?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setDuplicateExamData(null)}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (duplicateExamData) {
+                  handleCreateExam(duplicateExamData);
+                  setDuplicateExamData(null);
+                }
+              }}
+              className="bg-warning text-warning-foreground hover:bg-warning/90"
+            >
+              Proceed Anyway
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
