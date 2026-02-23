@@ -22,6 +22,70 @@ interface PaperWithDetails extends ScannedResult {
   letterGrade: string;
 }
 
+interface BubbleSheetPreviewProps {
+  answers: AnswerChoice[];
+  answerKey: AnswerChoice[];
+  choicesPerQuestion: number;
+}
+
+function BubbleSheetPreview({ answers, answerKey, choicesPerQuestion }: BubbleSheetPreviewProps) {
+  const choices = Array.from({ length: choicesPerQuestion }, (_, i) => String.fromCharCode(65 + i));
+  
+  return (
+    <div className="bg-white p-4 sm:p-6 border rounded-xl shadow-sm mb-6 overflow-x-auto">
+      <div className="flex items-center justify-between mb-4 border-b pb-2">
+        <h3 className="font-bold text-gray-800 uppercase tracking-wider text-sm">Visual Paper Preview</h3>
+        <div className="flex gap-4 text-[10px] font-semibold">
+          <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-primary"></div><span>Student Choice</span></div>
+          <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full border-2 border-green-500"></div><span>Correct Key</span></div>
+        </div>
+      </div>
+      
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-x-8 gap-y-4">
+        {[0, 1, 2, 3].map(colIdx => {
+          const start = colIdx * 25;
+          const end = Math.min(start + 25, answerKey.length);
+          if (start >= answerKey.length) return null;
+          
+          return (
+            <div key={colIdx} className="space-y-1">
+              {Array.from({ length: end - start }, (_, i) => {
+                const qIdx = start + i;
+                const studentAns = answers[qIdx]?.toUpperCase();
+                const correctAns = answerKey[qIdx]?.toUpperCase();
+                
+                return (
+                  <div key={qIdx} className="flex items-center gap-2 h-6">
+                    <span className="text-[10px] font-bold text-gray-400 w-4 text-right">{qIdx + 1}</span>
+                    <div className="flex gap-1">
+                      {choices.map(choice => {
+                        const isStudent = studentAns === choice;
+                        const isCorrect = correctAns === choice;
+                        
+                        return (
+                          <div 
+                            key={choice}
+                            className={`w-4 h-4 rounded-full border flex items-center justify-center text-[8px] font-bold transition-all
+                              ${isStudent ? 'bg-primary text-white border-primary shadow-sm' : 'bg-transparent text-gray-400 border-gray-300'}
+                              ${isCorrect ? 'ring-2 ring-green-500 ring-offset-1' : ''}
+                            `}
+                          >
+                            {choice}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function ReviewPapersPage({ params }: ReviewPapersProps) {
   const [exam, setExam] = useState<Exam | null>(null);
   const [papers, setPapers] = useState<PaperWithDetails[]>([]);
@@ -211,6 +275,12 @@ export default function ReviewPapersPage({ params }: ReviewPapersProps) {
               </p>
             </div>
           </div>
+
+          <BubbleSheetPreview 
+            answers={selectedPaper.answers} 
+            answerKey={answerKey} 
+            choicesPerQuestion={exam.choices_per_item} 
+          />
 
           {answerKey.length > 0 && (
             <div>

@@ -8,6 +8,7 @@ interface TemplateData {
   examName?: string;
   className?: string;
   examCode?: string;
+  answerKey?: string[]; // e.g. ['A','C','B', ...]
 }
 
 // Load GC logo
@@ -38,12 +39,15 @@ async function loadGCLogo(): Promise<string> {
 }
 
 // Helper function to draw a circle (for answer bubbles)
-function drawBubble(doc: jsPDF, x: number, y: number, size: number) {
-  // Draw white circle for shading (no square border)
-  // Make circle bigger - use full size instead of 35%
+function drawBubble(doc: jsPDF, x: number, y: number, size: number, filled = false) {
   doc.setDrawColor(0, 0, 0);
-  doc.setFillColor(255, 255, 255);
-  doc.circle(x, y, size * 0.5, 'FD'); // Circle is now 100% of size (diameter = size)
+  if (filled) {
+    doc.setFillColor(0, 0, 0);
+    doc.circle(x, y, size * 0.5, 'FD');
+  } else {
+    doc.setFillColor(255, 255, 255);
+    doc.circle(x, y, size * 0.5, 'FD');
+  }
 }
 
 export async function generateTemplatePDF(template: TemplateData) {
@@ -276,8 +280,10 @@ function drawMiniSheet(
       doc.setFont('helvetica', 'bold');
       doc.text(q.toString(), bx + numW - 3, qY + 1, { align: 'right' });
       doc.setFont('helvetica', 'normal');
+      const correctLetter = template.answerKey?.[q - 1]?.toUpperCase();
       for (let i = 0; i < choices.length; i++) {
-        drawBubble(doc, bx + numW + i * bubbleSpacing, qY, bubbleSize);
+        const isFilled = correctLetter ? choices[i] === correctLetter : false;
+        drawBubble(doc, bx + numW + i * bubbleSpacing, qY, bubbleSize, isFilled);
       }
       qY += ansRowH;
     }
@@ -389,8 +395,10 @@ function drawFullSheet(
       doc.setFont('helvetica', 'bold');
       doc.text(q.toString(), bx + numW - 4, qY + 1.2, { align: 'right' });
       doc.setFont('helvetica', 'normal');
+      const correctLetter = template.answerKey?.[q - 1]?.toUpperCase();
       for (let i = 0; i < choices.length; i++) {
-        drawBubble(doc, bx + numW + i * bubbleGap, qY, bubbleSize);
+        const isFilled = correctLetter ? choices[i] === correctLetter : false;
+        drawBubble(doc, bx + numW + i * bubbleGap, qY, bubbleSize, isFilled);
       }
       qY += rowH;
     }
