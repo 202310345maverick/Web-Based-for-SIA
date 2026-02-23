@@ -11,6 +11,8 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   Card,
@@ -29,11 +31,19 @@ import {
 } from 'lucide-react';
 import { DuplicateMatch } from '@/services/duplicateDetectionService';
 
+export type DuplicateResolutionMode = 'import' | 'skip' | 'edit' | 'merge';
+
+export interface DuplicateReviewResolution {
+  skippedStudentIds: string[];
+  editedStudentIds: Array<{ from: string; to: string }>;
+  mergedStudentIds: Array<{ from: string; into: string }>;
+}
+
 interface DuplicateReviewDialogProps {
   open: boolean;
   duplicates: DuplicateMatch[];
   totalRecords: number;
-  onProceed: (skippedRecords: string[]) => void;
+  onProceed: (resolution: DuplicateReviewResolution) => void;
   onCancel: () => void;
   isLoading?: boolean;
 }
@@ -47,31 +57,67 @@ export function DuplicateReviewDialog({
   isLoading = false,
 }: DuplicateReviewDialogProps) {
   const [expandedIndex, setExpandedIndex] = useState<number | null>(0);
-  const [selectedToSkip, setSelectedToSkip] = useState<Set<number>>(new Set());
+  const [decisionByStudentId, setDecisionByStudentId] = useState<Record<string, DuplicateResolutionMode>>({});
+  const [editedIdByStudentId, setEditedIdByStudentId] = useState<Record<string, string>>({});
 
-  const handleToggleSkip = (index: number) => {
-    const newSet = new Set(selectedToSkip);
-    if (newSet.has(index)) {
-      newSet.delete(index);
-    } else {
-      newSet.add(index);
-    }
-    setSelectedToSkip(newSet);
+  const uniqueUploadIds = Array.from(
+    new Set(duplicates.map((duplicate) => duplicate.uploadRecord.student_id))
+  );
+
+  const getDecision = (studentId: string): DuplicateResolutionMode => {
+    return decisionByStudentId[studentId] || 'import';
   };
 
   const handleSkipAll = () => {
-    setSelectedToSkip(new Set(duplicates.map((_, i) => i)));
+    const next: Record<string, DuplicateResolutionMode> = {};
+    uniqueUploadIds.forEach((id) => {
+      next[id] = 'skip';
+    });
+    setDecisionByStudentId(next);
   };
 
   const handleSkipNone = () => {
-    setSelectedToSkip(new Set());
+    setDecisionByStudentId({});
   };
 
   const handleProceed = () => {
-    const skippedRecords = Array.from(selectedToSkip).map(
-      idx => duplicates[idx].uploadRecord.student_id
-    );
-    onProceed(skippedRecords);
+    const skippedStudentIds: string[] = [];
+    const editedStudentIds: Array<{ from: string; to: string }> = [];
+    const mergedStudentIds: Array<{ from: string; into: string }> = [];
+    const handled = new Set<string>();
+
+    duplicates.forEach((duplicate) => {
+      const sourceId = duplicate.uploadRecord.student_id;
+      if (handled.has(sourceId)) return;
+      handled.add(sourceId);
+
+      const decision = getDecision(sourceId);
+      if (decision === 'skip') {
+        skippedStudentIds.push(sourceId);
+        return;
+      }
+
+      if (decision === 'edit') {
+        const editedId = (editedIdByStudentId[sourceId] || '').trim();
+        if (editedId && editedId !== sourceId) {
+          editedStudentIds.push({ from: sourceId, to: editedId });
+        }
+        return;
+      }
+
+      if (decision === 'merge') {
+        mergedStudentIds.push({
+          from: sourceId,
+          into: duplicate.existingStudent.student_id,
+        });
+      }
+    });
+
+    onProceed({
+      skippedStudentIds,
+      editedStudentIds,
+      mergedStudentIds,
+    });
   };
 
   const getSeverityIcon = (severity: 'high' | 'medium' | 'low') => {
@@ -107,6 +153,8 @@ export function DuplicateReviewDialog({
     }
   };
 
+  const skipCount = uniqueUploadIds.filter((id) => getDecision(id) === 'skip').length;
+
   return (
     <AlertDialog open={open} onOpenChange={(isOpen) => !isOpen && onCancel()}>
       <AlertDialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
@@ -126,8 +174,7 @@ export function DuplicateReviewDialog({
           <Alert className="border-yellow-200 bg-yellow-50">
             <AlertCircle className="h-4 w-4 text-yellow-600" />
             <AlertDescription className="text-yellow-800">
-              Please review each duplicate below. You can choose to skip duplicates
-              (don't import them) or proceed to import all flagged records.
+              Please review each conflict and choose a resolution: import, skip, edit ID, or merge.
             </AlertDescription>
           </Alert>
 
@@ -137,7 +184,7 @@ export function DuplicateReviewDialog({
               variant="outline"
               size="sm"
               onClick={handleSkipAll}
-              disabled={selectedToSkip.size === duplicates.length}
+              disabled={skipCount === uniqueUploadIds.length}
             >
               Skip All
             </Button>
@@ -145,14 +192,14 @@ export function DuplicateReviewDialog({
               variant="outline"
               size="sm"
               onClick={handleSkipNone}
-              disabled={selectedToSkip.size === 0}
+              disabled={skipCount === 0}
             >
               Skip None
             </Button>
             <div className="ml-auto text-sm text-gray-600 flex items-center">
-              {selectedToSkip.size > 0 && (
+              {skipCount > 0 && (
                 <span>
-                  {selectedToSkip.size} record{selectedToSkip.size !== 1 ? 's' : ''}{' '}
+                  {skipCount} record{skipCount !== 1 ? 's' : ''}{' '}
                   selected to skip
                 </span>
               )}
@@ -165,7 +212,7 @@ export function DuplicateReviewDialog({
               <Card
                 key={index}
                 className={`cursor-pointer transition-colors ${
-                  selectedToSkip.has(index)
+                  getDecision(duplicate.uploadRecord.student_id) === 'skip'
                     ? 'bg-gray-100 border-gray-300'
                     : 'hover:bg-gray-50'
                 }`}
@@ -197,15 +244,6 @@ export function DuplicateReviewDialog({
                     </div>
 
                     <div className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={selectedToSkip.has(index)}
-                        onChange={(e) => {
-                          e.stopPropagation();
-                          handleToggleSkip(index);
-                        }}
-                        className="h-5 w-5 rounded border-gray-300"
-                      />
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
@@ -306,6 +344,54 @@ export function DuplicateReviewDialog({
                           'This record has a very similar name to an existing student.'}
                       </AlertDescription>
                     </Alert>
+
+                    <div className="grid gap-2">
+                      <Label htmlFor={`resolution-${index}`}>Resolution</Label>
+                      <select
+                        id={`resolution-${index}`}
+                        value={getDecision(duplicate.uploadRecord.student_id)}
+                        onChange={(e) =>
+                          setDecisionByStudentId((prev) => ({
+                            ...prev,
+                            [duplicate.uploadRecord.student_id]: e.target.value as DuplicateResolutionMode,
+                          }))
+                        }
+                        className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                      >
+                        <option value="import">Import Anyway</option>
+                        <option value="skip">Skip Record</option>
+                        <option value="edit">Edit Student ID Then Import</option>
+                        <option value="merge" disabled={duplicate.source === 'batch'}>
+                          Merge Into Existing Record
+                        </option>
+                      </select>
+                    </div>
+
+                    {getDecision(duplicate.uploadRecord.student_id) === 'edit' && (
+                      <div className="grid gap-2">
+                        <Label htmlFor={`edited-id-${index}`}>New Student ID</Label>
+                        <Input
+                          id={`edited-id-${index}`}
+                          placeholder="YYYY-XXXX"
+                          value={editedIdByStudentId[duplicate.uploadRecord.student_id] || ''}
+                          onChange={(e) =>
+                            setEditedIdByStudentId((prev) => ({
+                              ...prev,
+                              [duplicate.uploadRecord.student_id]: e.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                    )}
+
+                    {getDecision(duplicate.uploadRecord.student_id) === 'merge' && (
+                      <Alert>
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertDescription>
+                          Merge into existing student <strong>{duplicate.existingStudent.student_id}</strong> and skip creating a new record.
+                        </AlertDescription>
+                      </Alert>
+                    )}
                   </CardContent>
                 )}
               </Card>
@@ -315,19 +401,18 @@ export function DuplicateReviewDialog({
           {/* Info Message */}
           <Alert>
             <AlertCircle className="h-4 w-4" />
-            <AlertDescription>
-              Uncheck records you want to import anyway. Checked records will be
-              skipped.
-            </AlertDescription>
-          </Alert>
-        </div>
+          <AlertDescription>
+              High-severity conflicts should be resolved with edit, merge, or skip.
+          </AlertDescription>
+        </Alert>
+      </div>
 
         <div className="flex justify-end gap-2 mt-6">
           <AlertDialogCancel disabled={isLoading}>Cancel</AlertDialogCancel>
           <AlertDialogAction
             onClick={handleProceed}
             disabled={isLoading}
-            className={selectedToSkip.size === duplicates.length ? 'opacity-75' : ''}
+            className={skipCount === uniqueUploadIds.length ? 'opacity-75' : ''}
           >
             {isLoading ? 'Processing...' : 'Proceed with Import'}
           </AlertDialogAction>

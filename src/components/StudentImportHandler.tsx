@@ -15,7 +15,7 @@ import * as XLSX from 'xlsx';
 import { StudentIDValidationService } from '@/services/studentIDValidationService';
 import { StudentService } from '@/services/studentService';
 import { DuplicateDetectionService } from '@/services/duplicateDetectionService';
-import { DuplicateReviewDialog } from './modals/DuplicateReviewDialog';
+import { DuplicateReviewDialog, DuplicateReviewResolution } from './modals/DuplicateReviewDialog';
 import { StudentIDBatchValidator } from './StudentIDValidator';
 
 interface StudentImportHandlerProps {
@@ -135,7 +135,7 @@ export function StudentImportHandler({
   /**
    * Import validated students (after duplicate review)
    */
-  const handleImport = async () => {
+  const handleImport = async (resolution?: DuplicateReviewResolution) => {
     if (!validationResult?.isValid) {
       toast.error('Please fix validation errors before importing');
       return;
@@ -147,9 +147,78 @@ export function StudentImportHandler({
     const errors: string[] = [];
 
     try {
-      const recordsToImport = validationResult.validRecords.filter(
-        (record: any) => !skippedRecords.has(record.student_id)
-      );
+      const appliedResolution: DuplicateReviewResolution = resolution || {
+        skippedStudentIds: Array.from(skippedRecords),
+        editedStudentIds: [],
+        mergedStudentIds: [],
+      };
+
+      const skipSet = new Set(appliedResolution.skippedStudentIds);
+      const editMap = new Map(appliedResolution.editedStudentIds.map((e) => [e.from, e.to]));
+      const mergeMap = new Map(appliedResolution.mergedStudentIds.map((m) => [m.from, m.into]));
+
+      for (const merge of appliedResolution.mergedStudentIds) {
+        try {
+          const uploadRecord = validationResult.validRecords.find(
+            (record: any) => record.student_id === merge.from
+          );
+
+          if (!uploadRecord) {
+            errors.push(`${merge.from}: merge source not found in upload`);
+            continue;
+          }
+
+          const existing = await StudentService.getStudentById(merge.into);
+          if (!existing) {
+            errors.push(`${merge.from}: merge target "${merge.into}" does not exist`);
+            continue;
+          }
+
+          const updates: Record<string, string> = {};
+          if (!existing.first_name && uploadRecord.first_name) updates.first_name = uploadRecord.first_name;
+          if (!existing.last_name && uploadRecord.last_name) updates.last_name = uploadRecord.last_name;
+          if (!existing.email && uploadRecord.email) updates.email = uploadRecord.email;
+          if (!existing.grade && uploadRecord.grade) updates.grade = uploadRecord.grade;
+          if (!existing.section && uploadRecord.section) updates.section = uploadRecord.section;
+
+          if (Object.keys(updates).length > 0) {
+            await StudentService.updateStudent(existing.student_id, updates);
+          }
+        } catch (error) {
+          errors.push(`${merge.from}: failed to merge - ${(error as Error).message}`);
+        }
+      }
+
+      const recordsToImport = validationResult.validRecords
+        .filter((record: any) => !skipSet.has(record.student_id) && !mergeMap.has(record.student_id))
+        .map((record: any) => ({
+          ...record,
+          student_id: (editMap.get(record.student_id) || record.student_id).trim(),
+        }));
+
+      for (const edit of appliedResolution.editedStudentIds) {
+        const format = StudentIDValidationService.validateStudentIdFormat(edit.to);
+        if (!format.isValid) {
+          errors.push(`${edit.from}: ${format.error || 'Invalid edited ID format'}`);
+        }
+      }
+
+      const seenResolvedIds = new Set<string>();
+      recordsToImport.forEach((record: any) => {
+        if (seenResolvedIds.has(record.student_id)) {
+          errors.push(`${record.student_id}: duplicate after conflict resolution`);
+          return;
+        }
+        seenResolvedIds.add(record.student_id);
+      });
+
+      if (errors.length > 0) {
+        toast.error('Conflict resolution contains invalid actions.');
+        onImportError?.(errors);
+        setImporting(false);
+        return;
+      }
+
       const totalRecords = recordsToImport.length;
 
       for (let i = 0; i < recordsToImport.length; i++) {
@@ -202,9 +271,15 @@ export function StudentImportHandler({
         onImportComplete?.(importedStudents);
       }
 
-      if (skippedRecords.size > 0) {
+      if (appliedResolution.skippedStudentIds.length > 0) {
         toast.info(
-          `Skipped ${skippedRecords.size} record${skippedRecords.size !== 1 ? 's' : ''} due to duplicate detection`
+          `Skipped ${appliedResolution.skippedStudentIds.length} record${appliedResolution.skippedStudentIds.length !== 1 ? 's' : ''} due to duplicate detection`
+        );
+      }
+
+      if (appliedResolution.mergedStudentIds.length > 0) {
+        toast.info(
+          `Merged ${appliedResolution.mergedStudentIds.length} record${appliedResolution.mergedStudentIds.length !== 1 ? 's' : ''} into existing records`
         );
       }
 
@@ -232,18 +307,30 @@ export function StudentImportHandler({
   /**
    * Handle duplicate review completion
    */
-  const handleDuplicateReviewComplete = (skippedIds: string[]) => {
-    setSkippedRecords(new Set(skippedIds));
+  const handleDuplicateReviewComplete = (resolution: DuplicateReviewResolution) => {
+    setSkippedRecords(new Set(resolution.skippedStudentIds));
     setShowDuplicateReview(false);
     
-    if (skippedIds.length > 0) {
+    if (resolution.skippedStudentIds.length > 0) {
       toast.info(
-        `${skippedIds.length} record${skippedIds.length !== 1 ? 's' : ''} marked to skip`
+        `${resolution.skippedStudentIds.length} record${resolution.skippedStudentIds.length !== 1 ? 's' : ''} marked to skip`
+      );
+    }
+
+    if (resolution.editedStudentIds.length > 0) {
+      toast.info(
+        `${resolution.editedStudentIds.length} record${resolution.editedStudentIds.length !== 1 ? 's' : ''} set to edit before import`
+      );
+    }
+
+    if (resolution.mergedStudentIds.length > 0) {
+      toast.info(
+        `${resolution.mergedStudentIds.length} record${resolution.mergedStudentIds.length !== 1 ? 's' : ''} set to merge`
       );
     }
     
-    // Proceed with import
-    handleImport();
+    // Proceed with import using selected manual resolutions.
+    handleImport(resolution);
   };
 
   return (

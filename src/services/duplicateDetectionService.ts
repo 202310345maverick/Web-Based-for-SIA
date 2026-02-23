@@ -11,6 +11,7 @@ import { db } from '@/lib/firebase';
 
 export interface DuplicateMatch {
   matchType: 'student_id' | 'email' | 'name_combination';
+  source: 'database' | 'batch';
   existingStudent: {
     student_id: string;
     first_name: string;
@@ -207,6 +208,7 @@ export class DuplicateDetectionService {
           console.log(`Existing student data:`, existingData);
           duplicateMatches.push({
             matchType: 'student_id',
+            source: 'database',
             existingStudent: {
               student_id: record.student_id,
               first_name: existingData.first_name,
@@ -231,6 +233,7 @@ export class DuplicateDetectionService {
             if (existing.student_id !== record.student_id) {
               duplicateMatches.push({
                 matchType: 'email',
+                source: 'database',
                 existingStudent: {
                   student_id: existing.student_id,
                   first_name: existing.first_name,
@@ -265,6 +268,7 @@ export class DuplicateDetectionService {
             if (similarity > 0.85) {
               duplicateMatches.push({
                 matchType: 'name_combination',
+                source: 'database',
                 existingStudent: {
                   student_id: existing.student_id,
                   first_name: existing.first_name,
@@ -316,6 +320,7 @@ export class DuplicateDetectionService {
       if (seen.has(record.student_id)) {
         duplicates.push({
           matchType: 'student_id',
+          source: 'batch',
           existingStudent: {
             student_id: seen.get(record.student_id).student_id,
             first_name: seen.get(record.student_id).first_name,
@@ -341,6 +346,7 @@ export class DuplicateDetectionService {
           ) {
             duplicates.push({
               matchType: 'email',
+              source: 'batch',
               existingStudent: {
                 student_id: seenRecord.student_id,
                 first_name: seenRecord.first_name,
