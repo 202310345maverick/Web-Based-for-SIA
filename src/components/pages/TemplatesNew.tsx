@@ -23,6 +23,7 @@ import {
 import { FileText, Download, Plus, Eye } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
+import { AnswerKeyService } from '@/services/answerKeyService';
 import { collection, getDocs, addDoc, serverTimestamp, query, where } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { generateTemplatePDF } from '@/lib/templatePdfGenerator';
@@ -211,6 +212,15 @@ export default function Templates() {
   const handleDownload = async (template: Template) => {
     try {
       toast.info('📄 Generating PDF...');
+      
+      let answerKey: string[] | undefined;
+      if (template.examId) {
+        const result = await AnswerKeyService.getAnswerKeyByExamId(template.examId);
+        if (result.success && result.data) {
+          answerKey = result.data.answers;
+        }
+      }
+
       await generateTemplatePDF({
         name: template.name,
         description: template.description,
@@ -218,6 +228,7 @@ export default function Templates() {
         choicesPerQuestion: template.choicesPerQuestion,
         examName: template.examName,
         className: template.className,
+        answerKey: answerKey
       });
       toast.success(`✅ Downloaded ${template.name}`);
     } catch (error) {

@@ -93,6 +93,10 @@ export function CreateExamModal({
       toast.error("Please select a date");
       return;
     }
+    if (!formData.folder.trim()) {
+      toast.error("Please enter a subject/folder name");
+      return;
+    }
 
     try {
       const selected = new Date(formData.date + "T00:00:00");
@@ -341,7 +345,7 @@ export function CreateExamModal({
 
               <label className="block">
                 <span className="text-sm font-semibold text-foreground mb-2 block">
-                  Folder
+                  Folder / Subject *
                 </span>
                 <input
                   type="text"

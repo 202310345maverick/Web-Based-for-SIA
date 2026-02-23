@@ -10,8 +10,10 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
+  DialogFooter,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -28,7 +30,7 @@ import {
   Tag,
   FilePlus,
 } from "lucide-react";
-import { getExamById, Exam } from "@/services/examService";
+import { getExamById, updateExam, Exam } from "@/services/examService";
 import { AnswerKeyService } from "@/services/answerKeyService";
 import { ScanningService } from "@/services/scanningService";
 import { useAuth } from "@/contexts/AuthContext";
@@ -51,6 +53,13 @@ export default function ExamDetails({ params }: ExamDetailsProps) {
   const { user } = useAuth();
   const [exam, setExam] = useState<Exam | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showEditDialog, setShowEditDialog] = useState(false);
+  const [editData, setEditData] = useState({
+    title: "",
+    subject: "",
+    date: ""
+  });
+  const [isUpdating, setIsUpdating] = useState(false);
   const [scannedPaperCount, setScannedPaperCount] = useState(0);
   const [answerKeyStatus, setAnswerKeyStatus] = useState<AnswerKeyStatus>({
     total: 0,
@@ -153,6 +162,37 @@ export default function ExamDetails({ params }: ExamDetailsProps) {
     );
   }
 
+  const handleUpdateExam = async () => {
+    if (!editData.title.trim() || !editData.subject.trim()) {
+      toast.error("Title and Subject are required");
+      return;
+    }
+
+    setIsUpdating(true);
+    try {
+      await updateExam(params.id as string, {
+        title: editData.title,
+        subject: editData.subject,
+        created_at: editData.date
+      });
+      
+      setExam(prev => prev ? {
+        ...prev,
+        title: editData.title,
+        subject: editData.subject,
+        created_at: editData.date
+      } : null);
+      
+      toast.success("Exam updated successfully");
+      setShowEditDialog(false);
+    } catch (error) {
+      console.error("Error updating exam:", error);
+      toast.error("Failed to update exam");
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
   const handleCreateTemplate = async () => {
     if (!user?.instructorId) {
       toast.error('⚠️ Instructor ID not found. Please log out and log back in.');
@@ -223,6 +263,7 @@ export default function ExamDetails({ params }: ExamDetailsProps) {
         choicesPerQuestion: newTemplate.choicesPerQuestion,
         examName: exam.title,
         examCode: examCode,
+        answerKey: await AnswerKeyService.getAnswerKeyByExamId(params.id).then(r => (r.success && r.data) ? r.data.answers : undefined)
       });
       
       setShowCreateTemplate(false);
@@ -302,9 +343,20 @@ export default function ExamDetails({ params }: ExamDetailsProps) {
           <ArrowLeft className="w-5 h-5" />
         </Link>
         <div className="min-w-0">
-          <h1 className="text-xl sm:text-3xl font-bold text-foreground truncate">
-            {exam.title}
-          </h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-xl sm:text-3xl font-bold text-foreground truncate">
+              {exam.title}
+            </h1>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="h-8 px-2 text-muted-foreground hover:text-primary flex-shrink-0"
+              onClick={() => setShowEditDialog(true)}
+            >
+              <Edit2 className="w-4 h-4 mr-1" />
+              Edit
+            </Button>
+          </div>
           <p className="text-xs sm:text-sm text-muted-foreground truncate">
             ID: {exam.id}
           </p>
@@ -491,6 +543,49 @@ export default function ExamDetails({ params }: ExamDetailsProps) {
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+      {/* Edit Exam Dialog */}
+      <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Edit Exam Details</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="title">Exam Title</Label>
+              <Input
+                id="title"
+                value={editData.title}
+                onChange={(e) => setEditData({ ...editData, title: e.target.value })}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="subject">Subject / Folder</Label>
+              <Input
+                id="subject"
+                value={editData.subject}
+                onChange={(e) => setEditData({ ...editData, subject: e.target.value })}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="date">Exam Date</Label>
+              <Input
+                id="date"
+                type="date"
+                value={editData.date}
+                onChange={(e) => setEditData({ ...editData, date: e.target.value })}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowEditDialog(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleUpdateExam} disabled={isUpdating}>
+              {isUpdating ? "Updating..." : "Save Changes"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

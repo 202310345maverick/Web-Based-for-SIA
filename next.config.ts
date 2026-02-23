@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  turbopack: {},
   typescript: {
     // Allow build to succeed even with type errors (pre-existing unused imports)
     ignoreBuildErrors: true,
