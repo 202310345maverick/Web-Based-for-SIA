@@ -390,17 +390,32 @@ export default function ClassManagement() {
   };
 
   const downloadTemplate = () => {
-    // simple CSV template
     const headers = [
       "Student ID",
       "First Name",
       "Last Name",
       "Email (Optional)",
     ];
+    const sampleData = [
+      headers,
+      ["2024-00001", "Juan", "Dela Cruz", "juan.delacruz@email.com"],
+      ["2024-00002", "Maria", "Santos", "maria.santos@email.com"],
+      ["2024-00003", "Jose", "Rizal", ""],
+    ];
     const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.aoa_to_sheet([headers]);
-    XLSX.utils.book_append_sheet(wb, ws, "Template");
+    const ws = XLSX.utils.aoa_to_sheet(sampleData);
+
+    // Set column widths for better readability
+    ws["!cols"] = [
+      { wch: 15 }, // Student ID
+      { wch: 15 }, // First Name
+      { wch: 15 }, // Last Name
+      { wch: 30 }, // Email
+    ];
+
+    XLSX.utils.book_append_sheet(wb, ws, "Students");
     XLSX.writeFile(wb, "student_import_template.xlsx");
+    toast.success("Template downloaded! Fill it in and use Import Excel to upload.");
   };
 
   const filteredClasses = classes
@@ -421,6 +436,14 @@ export default function ClassManagement() {
           </p>
         </div>
         <div className="flex gap-2">
+          <Button
+            onClick={downloadTemplate}
+            variant="outline"
+            className="gap-2"
+          >
+            <Download className="w-4 h-4" />
+            Download Template
+          </Button>
           <Button
             onClick={() => fileInputRef.current?.click()}
             variant="outline"
