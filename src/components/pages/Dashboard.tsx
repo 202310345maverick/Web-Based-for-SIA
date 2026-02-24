@@ -143,9 +143,28 @@ export default function Dashboard() {
           return sum;
         }, 0);
         
-        // OPTIMIZATION 3: Student count - set to 0 for now to avoid timeout
-        // Note: Students are managed per class, not globally
-        const totalStudents = 0;
+        // OPTIMIZATION 3: Get actual student count from classes
+        let totalStudents = 0;
+        try {
+          const classesRef = collection(db, 'classes');
+          const classesQuery = query(classesRef, where('createdBy', '==', user.id));
+          const classesSnapshot = await getDocs(classesQuery);
+          
+          totalStudents = classesSnapshot.docs.reduce((sum, doc) => {
+            const data = doc.data();
+            const students = data.students || [];
+            // Only count students from non-archived classes
+            if (!data.isArchived) {
+              return sum + students.length;
+            }
+            return sum;
+          }, 0);
+          
+          console.log('Total students counted:', totalStudents);
+        } catch (studentError) {
+          console.warn('Could not fetch student count:', studentError);
+          totalStudents = 0;
+        }
         
         console.log('Dashboard data fetched successfully:', {
           totalExams,

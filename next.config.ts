@@ -14,6 +14,20 @@ const nextConfig: NextConfig = {
   experimental: {
     esmExternals: true,
   },
+  // Fix COOP warning for Google Sign-In popup
+  async headers() {
+    return [
+      {
+        source: '/:path*',
+        headers: [
+          {
+            key: 'Cross-Origin-Opener-Policy',
+            value: 'same-origin-allow-popups',
+          },
+        ],
+      },
+    ];
+  },
   // Suppress Watchpack errors for Windows system files
   webpack: (config, { isServer }) => {
     if (!isServer) {

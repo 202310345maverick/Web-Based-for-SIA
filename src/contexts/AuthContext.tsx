@@ -8,6 +8,8 @@ import {
   onAuthStateChanged,
   updateProfile,
   User as FirebaseUser,
+  GoogleAuthProvider,
+  signInWithPopup,
 } from 'firebase/auth';
 import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase';
@@ -40,6 +42,7 @@ interface AuthContextType {
   userRole: AppRole | null;
   signUp: (email: string, password: string, fullName: string) => Promise<{ error: Error | null }>;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
+  signInWithGoogle: () => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
   firebaseUser: FirebaseUser | null;
 }
@@ -428,6 +431,80 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  // Google Sign-In function
+  const signInWithGoogle = useCallback(async () => {
+    try {
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({
+        prompt: 'select_account'
+      });
+      
+      const result = await signInWithPopup(auth, provider);
+      const firebaseUser = result.user;
+
+      // Check if user document already exists (optimized with single read)
+      const userDocRef = doc(db, 'users', firebaseUser.uid);
+      const userDoc = await getDoc(userDocRef);
+
+      if (!userDoc.exists()) {
+        // New user - create profile in parallel
+        const displayName = firebaseUser.displayName || 'Google User';
+        const email = firebaseUser.email || '';
+
+        try {
+          // Create instructor profile and user document in parallel for speed
+          const instructorProfilePromise = createInstructorProfile(
+            firebaseUser.uid,
+            email,
+            displayName
+          );
+
+          // Wait for instructor profile to get ID
+          const instructorProfile = await instructorProfilePromise;
+          const instructorId = instructorProfile.instructorId;
+
+          // Create user document with instructorId
+          await setDoc(userDocRef, {
+            email: email,
+            fullName: displayName,
+            role: 'instructor',
+            instructorId: instructorId,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+            authProvider: 'google',
+          });
+
+          console.log('✅ Google user profile created:', instructorId);
+        } catch (setupError: any) {
+          console.error('❌ Failed to setup Google user:', setupError);
+          // Clean up - delete auth user if setup fails
+          await firebaseUser.delete();
+          throw new Error('Failed to create user profile. Please try again.');
+        }
+      }
+
+      return { error: null };
+    } catch (error: any) {
+      console.error('Google sign in error:', error);
+
+      let userMessage = 'Failed to sign in with Google. Please try again.';
+
+      if (error.code === 'auth/popup-closed-by-user') {
+        userMessage = 'Sign-in cancelled. Please try again.';
+      } else if (error.code === 'auth/popup-blocked') {
+        userMessage = 'Pop-up blocked by browser. Please allow pop-ups and try again.';
+      } else if (error.code === 'auth/cancelled-popup-request') {
+        userMessage = 'Sign-in cancelled.';
+      } else if (error.code === 'auth/network-request-failed') {
+        userMessage = 'Network error. Please check your internet connection.';
+      } else if (error.message) {
+        userMessage = error.message;
+      }
+
+      return { error: new Error(userMessage) };
+    }
+  }, []);
+
   // OPTIMIZATION 10: Memoized sign out
   const signOut = useCallback(async () => {
     try {
@@ -462,7 +539,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         loading, 
         userRole, 
         signUp, 
-        signIn, 
+        signIn,
+        signInWithGoogle,
         signOut,
         firebaseUser,
       }}
