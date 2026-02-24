@@ -10,6 +10,7 @@ import {
   User as FirebaseUser,
   GoogleAuthProvider,
   signInWithPopup,
+  sendEmailVerification,
 } from 'firebase/auth';
 import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase';
@@ -40,10 +41,11 @@ interface AuthContextType {
   session: AppSession | null;
   loading: boolean;
   userRole: AppRole | null;
-  signUp: (email: string, password: string, fullName: string) => Promise<{ error: Error | null }>;
+  signUp: (email: string, password: string, fullName: string) => Promise<{ error: Error | null; needsVerification?: boolean }>;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signInWithGoogle: () => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
+  resendVerificationEmail: () => Promise<{ error: Error | null }>;
   firebaseUser: FirebaseUser | null;
 }
 
@@ -103,7 +105,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           
           if (cachedUser && cachedUser.instructorId) {
             // Use cached user data ONLY if it has instructorId
-            console.log('✅ Using cached user data with instructorId:', cachedUser.instructorId);
             setUser(cachedUser);
             setUserRole(cachedUser.role);
             
@@ -143,6 +144,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setSession(newSession);
             // OPTIMIZATION 11: Persist session to localStorage
             localStorage.setItem('auth_session', JSON.stringify(newSession));
+            
+            // Set loading to false immediately - user can access app now
+            setLoading(false);
           }
           
           // OPTIMIZATION 5: Fetch token with timeout (without AbortController)
@@ -169,40 +173,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // OPTIMIZATION 6: Lazy load Firestore user data with timeout
           // ALWAYS fetch from Firestore if cache doesn't have instructorId
           if (!cachedUser || !cachedUser.instructorId) {
-            console.log('🔄 Fetching user data from Firestore (cache miss or no instructorId)');
             const loadUserData = async () => {
               try {
                 const userDocRef = doc(db, 'users', firebaseUser.uid);
                 
-                // Increase timeout to 5 seconds for instructorId fetch
+                // Fetch user data with 3 second timeout (no retry - fail fast)
                 let userDoc;
                 try {
-                  console.log('⏳ Fetching from Firestore with 5s timeout...');
                   userDoc = await Promise.race([
                     getDoc(userDocRef),
                     new Promise((_, reject) => {
-                      setTimeout(() => reject(new Error('Firestore timeout')), 5000);
+                      setTimeout(() => reject(new Error('Firestore timeout')), 3000);
                     })
                   ]) as any;
-                  console.log('✅ Firestore fetch successful');
                 } catch (timeoutError) {
-                  console.error('❌ Firestore fetch timed out or failed:', timeoutError);
-                  // If we need instructorId, don't skip - retry without timeout
-                  try {
-                    console.log('🔄 Retrying without timeout...');
-                    userDoc = await getDoc(userDocRef);
-                    console.log('✅ Retry successful');
-                  } catch (retryError) {
-                    console.error('❌ Retry failed:', retryError);
-                    return;
-                  }
+                  console.warn('Firestore fetch timed out - using cached data');
+                  return; // Fail fast, user already has basic data
                 }
                 
                 if (userDoc && userDoc.exists()) {
                   const userData = userDoc.data();
-                  
-                  console.log('📋 Loading user data from Firestore:', userData);
-                  console.log('🆔 InstructorId from Firestore:', userData.instructorId);
                   
                   const fullUserData: AppUser = {
                     id: firebaseUser.uid,
@@ -216,9 +206,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     role: userData.role || 'instructor',
                     instructorId: userData.instructorId, // Read directly from users collection
                   };
-                  
-                  console.log('✅ Full user data constructed:', fullUserData);
-                  console.log('🎯 InstructorId in fullUserData:', fullUserData.instructorId);
                   
                   setUser(fullUserData);
                   setUserRole(userData.role || 'instructor');
@@ -253,8 +240,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // OPTIMIZATION 11: Clear session from localStorage
           localStorage.removeItem('auth_session');
           clearTimeouts();
+          setLoading(false);
         }
-      } finally {
+      } catch (error) {
+        console.error('Auth state change error:', error);
         setLoading(false);
       }
     });
@@ -328,7 +317,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Wait for both to complete - if user doc creation fails, this will throw
         await Promise.all([updateDisplayNamePromise, createUserDocPromise]);
 
-        return { error: null };
+        // STEP 4: Send email verification
+        try {
+          await sendEmailVerification(firebaseUser, {
+            url: window.location.origin + '/auth?verified=true',
+            handleCodeInApp: false,
+          });
+          console.log('✅ Verification email sent to:', email);
+        } catch (emailError: any) {
+          console.warn('⚠️ Could not send verification email:', emailError?.message);
+          // Non-critical - account is created, user can resend later
+        }
+
+        // Sign out user immediately - they must verify email first
+        await firebaseSignOut(auth);
+
+        return { error: null, needsVerification: true };
         
       } catch (setupError: any) {
         // If user document creation fails, delete the Firebase Auth user
@@ -397,7 +401,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Clear any cached user data for this email
       // (Will be re-fetched on auth state change)
       
-      await signInWithEmailAndPassword(auth, email, password);
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const firebaseUser = userCredential.user;
+
+      // Check if email is verified (skip check for existing users created before verification was added)
+      // Only enforce verification for new accounts (created after this feature was deployed)
+      if (!firebaseUser.emailVerified) {
+        // Use Firebase user metadata.creationTime instead of Firestore read (instant!)
+        const createdAt = new Date(firebaseUser.metadata.creationTime!);
+        const verificationFeatureDate = new Date('2026-02-24T16:00:00'); // Date we added verification (afternoon)
+        
+        // Only require verification for accounts created AFTER we added this feature
+        if (createdAt > verificationFeatureDate) {
+          // Sign out immediately
+          await firebaseSignOut(auth);
+          return { 
+            error: new Error('Please verify your email before signing in. Check your inbox (and spam folder) for the verification link.') 
+          };
+        }
+        // Old accounts can sign in without verification (backwards compatibility)
+      }
+
       return { error: null };
     } catch (error: any) {
       console.error('Sign in error:', error);
@@ -531,6 +555,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [firebaseUser?.uid]);
 
+  // Resend verification email
+  const resendVerificationEmail = useCallback(async () => {
+    try {
+      if (!firebaseUser) {
+        return { error: new Error('No user logged in') };
+      }
+
+      if (firebaseUser.emailVerified) {
+        return { error: new Error('Email already verified') };
+      }
+
+      await sendEmailVerification(firebaseUser, {
+        url: window.location.origin + '/auth?verified=true',
+        handleCodeInApp: false,
+      });
+
+      return { error: null };
+    } catch (error: any) {
+      console.error('Resend verification error:', error);
+      
+      let userMessage = 'Failed to resend verification email';
+      
+      if (error.code === 'auth/too-many-requests') {
+        userMessage = 'Too many requests. Please wait a few minutes before trying again.';
+      } else if (error.message) {
+        userMessage = error.message;
+      }
+
+      return { error: new Error(userMessage) };
+    }
+  }, [firebaseUser]);
+
   return (
     <AuthContext.Provider 
       value={{ 
@@ -542,6 +598,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         signIn,
         signInWithGoogle,
         signOut,
+        resendVerificationEmail,
         firebaseUser,
       }}
     >

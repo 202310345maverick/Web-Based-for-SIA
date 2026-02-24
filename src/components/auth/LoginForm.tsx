@@ -13,10 +13,10 @@ interface LoginFormProps {
 
 export function LoginForm({ onToggleMode }: LoginFormProps) {
   const router = useRouter();
-  const { signIn, signInWithGoogle, user } = useAuth();
+  const { signIn, signInWithGoogle, user, loading: authLoading } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [formLoading, setFormLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showPasswordField, setShowPasswordField] = useState(false);
   const [passwordVisible, setPasswordVisible] = useState(false);
@@ -27,28 +27,26 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
   const [resetSuccess, setResetSuccess] = useState(false);
 
   useEffect(() => {
-    if (user && !loading) {
-      // Small delay to ensure all state updates are processed
-      const timer = setTimeout(() => {
-        router.push('/dashboard');
-      }, 100);
-      return () => clearTimeout(timer);
+    // Redirect when user is logged in and auth is not loading
+    if (user && !authLoading) {
+      console.log('🚀 Redirecting to dashboard...', { user: user.email, authLoading });
+      router.push('/dashboard');
     }
-  }, [user, loading, router]);
+  }, [user, authLoading, router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
+    setFormLoading(true);
     setError(null);
 
     const { error } = await signIn(email, password);
     
     if (error) {
       setError(error.message);
-      setLoading(false);
+      setFormLoading(false);
     }
-    // If no error, the onAuthStateChanged listener will handle the redirect
-    // Don't set loading to false - let the useEffect handle it when user updates
+    // Success - onAuthStateChanged will update user state and trigger redirect
+    // FormLoading will stay true until redirect happens
   };
 
   const handleForgotPassword = async (e: React.FormEvent) => {
@@ -77,6 +75,16 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
   return (
     <div className="min-h-screen flex items-center justify-center p-4" style={{ backgroundColor: '#FEF9E7' }}>
       <div className="w-full max-w-md">
+        {/* Back to Home Button */}
+        <button
+          onClick={() => router.push('/')}
+          className="mb-6 flex items-center gap-2 text-sm font-medium hover:underline transition-all group"
+          style={{ color: '#166534' }}
+        >
+          <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" style={{ color: '#B38B00' }} />
+          Back to Home
+        </button>
+
         {/* Logo with design department styling and S box */}
         <div className="text-center mb-8">
           <div className="flex items-center justify-center gap-3">
@@ -152,16 +160,16 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
               <button
                 type="button"
                 onClick={async () => {
-                  setLoading(true);
+                  setFormLoading(true);
                   setError(null);
                   const { error } = await signInWithGoogle();
                   if (error) {
                     setError(error.message);
-                    setLoading(false);
+                    setFormLoading(false);
                   }
                   // If successful, onAuthStateChanged will handle redirect
                 }}
-                disabled={loading}
+                disabled={formLoading}
                 className="w-full h-14 px-4 py-2 bg-white border-2 hover:bg-gray-50 rounded-xl font-semibold transition-all duration-200 inline-flex items-center justify-center gap-3 transform hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
                 style={{ 
                   borderColor: '#F0E6D2',
@@ -169,7 +177,7 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
                   boxShadow: '0 4px 8px -2px rgba(22, 101, 52, 0.1)'
                 }}
               >
-                {loading ? (
+                {formLoading ? (
                   <Loader2 className="w-5 h-5 animate-spin" />
                 ) : (
                   <>
@@ -273,14 +281,14 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
 
                 <button 
                   type="submit" 
-                  disabled={loading} 
+                  disabled={formLoading} 
                   className="w-full h-14 px-4 py-2 text-white hover:opacity-90 rounded-xl font-semibold transition-all duration-200 inline-flex items-center justify-center disabled:opacity-50 transform hover:scale-[1.02] active:scale-[0.98]"
                   style={{ 
                     backgroundColor: '#166534',
                     boxShadow: '0 8px 16px -4px rgba(22, 101, 52, 0.3)'
                   }}
                 >
-                  {loading ? (
+                  {formLoading ? (
                     <>
                       <Loader2 className="mr-2 h-5 w-5 animate-spin" />
                       Signing in...

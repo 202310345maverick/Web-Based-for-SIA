@@ -71,10 +71,11 @@ export default function Dashboard() {
       return;
     }
 
+    // Mark as fetching immediately to prevent double fetch
+    hasFetched.current = true;
+
     async function fetchStats() {
       try {
-        console.log('Dashboard v2.0 - Fetching stats for user:', user.id);
-        
         // OPTIMIZATION 1: Simplified query without orderBy to avoid needing composite index
         const examsRef = collection(db, 'exams');
         const q = query(
@@ -84,15 +85,15 @@ export default function Dashboard() {
         
         let querySnapshot;
         try {
-          // Add timeout to prevent hanging
+          // Reduce timeout to 3 seconds
           querySnapshot = await Promise.race([
             getDocs(q),
             new Promise((_, reject) => {
-              setTimeout(() => reject(new Error('Query timeout')), 5000);
+              setTimeout(() => reject(new Error('Query timeout')), 3000);
             })
           ]) as any;
         } catch (queryError: any) {
-          console.warn('Dashboard query failed or timed out:', queryError.message);
+          console.warn('Dashboard query timed out:', queryError.message);
           // Fallback: set empty stats instead of failing
           setStats({
             totalExams: 0,
@@ -100,8 +101,7 @@ export default function Dashboard() {
             totalSheets: 0,
             recentExams: [],
           });
-          hasFetched.current = true;
-          return;
+          return; // Exit early
         }
         
         // Calculate all stats from this single query
@@ -186,9 +186,6 @@ export default function Dashboard() {
           })),
         });
         
-        // Mark as fetched to prevent duplicate requests
-        hasFetched.current = true;
-        
       } catch (error) {
         console.error('Error fetching stats:', error);
         // Set empty stats on error instead of showing error toast
@@ -198,19 +195,12 @@ export default function Dashboard() {
           totalSheets: 0,
           recentExams: [],
         });
-        hasFetched.current = true;
       } finally {
         setLoading(false);
       }
     }
 
     fetchStats();
-    
-    // Cleanup function
-    return () => {
-      // Reset ref if component unmounts
-      hasFetched.current = false;
-    };
   }, [user?.id]); // Only depend on user.id
 
   const handleCreateExam = async (formData: ExamFormData) => {

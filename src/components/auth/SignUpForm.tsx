@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Loader2, CheckCircle, User, Mail, Lock } from 'lucide-react';
+import { Loader2, CheckCircle, User, Mail, Lock, ArrowLeft } from 'lucide-react';
 
 interface SignUpFormProps {
   onToggleMode: () => void;
@@ -13,13 +13,15 @@ interface SignUpFormProps {
 
 export function SignUpForm({ onToggleMode }: SignUpFormProps) {
   const router = useRouter();
-  const { signUp, signInWithGoogle, user } = useAuth();
+  const { signUp, signInWithGoogle, user, resendVerificationEmail } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [needsVerification, setNeedsVerification] = useState(false);
+  const [resendLoading, setResendLoading] = useState(false);
 
   useEffect(() => {
     // Only redirect if signup was successful (not just if user exists)
@@ -35,19 +37,115 @@ export function SignUpForm({ onToggleMode }: SignUpFormProps) {
     e.preventDefault();
     setLoading(true);
     setError(null);
-    setSuccess(false); // Reset success state
+    setSuccess(false);
+    setNeedsVerification(false);
 
-    const { error } = await signUp(email, password, fullName);
+    const result = await signUp(email, password, fullName);
     
-    if (error) {
-      setError(error.message);
+    if (result.error) {
+      setError(result.error.message);
       setLoading(false);
-      setSuccess(false); // Ensure success is false on error
+      setSuccess(false);
+    } else if (result.needsVerification) {
+      setNeedsVerification(true);
+      setLoading(false);
     } else {
       setSuccess(true);
       setLoading(false);
     }
   };
+
+  const handleResendVerification = async () => {
+    setResendLoading(true);
+    setError(null);
+    
+    const { error } = await resendVerificationEmail();
+    
+    if (error) {
+      setError(error.message);
+    } else {
+      setError('Verification email sent! Check your inbox and spam folder.');
+    }
+    
+    setResendLoading(false);
+  };
+
+  if (needsVerification) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4" style={{ backgroundColor: '#FEF9E7' }}>
+        <div className="w-full max-w-md">
+          <div className="rounded-2xl p-8" style={{ 
+            backgroundColor: '#FFFFFF', 
+            borderColor: '#F0E6D2', 
+            borderWidth: '1px',
+            boxShadow: '0 20px 40px -12px rgba(22, 101, 52, 0.15)'
+          }}>
+            <div className="w-16 h-16 rounded-full bg-[#B38B00]/10 flex items-center justify-center mx-auto mb-4">
+              <Mail className="w-8 h-8" style={{ color: '#B38B00' }} />
+            </div>
+            <h2 className="text-2xl font-bold mb-2 text-center" style={{ color: '#166534' }}>Verify Your Email</h2>
+            <p className="text-center mb-6" style={{ color: '#B38B00' }}>
+              We've sent a verification link to <strong style={{ color: '#166534' }}>{email}</strong>
+            </p>
+
+            <div className="bg-[#B38B00]/5 border-2 border-[#B38B00]/20 rounded-lg p-4 mb-6">
+              <p className="text-sm mb-2" style={{ color: '#166534' }}>
+                <strong>📧 Check these places:</strong>
+              </p>
+              <ul className="text-sm space-y-1 ml-4" style={{ color: '#B38B00' }}>
+                <li>• Your <strong>Inbox</strong></li>
+                <li>• Your <strong>Spam</strong> or <strong>Junk</strong> folder</li>
+                <li>• Your <strong>Promotions</strong> tab (Gmail)</li>
+                <li>• Your <strong>Updates</strong> tab (Gmail)</li>
+              </ul>
+            </div>
+
+            {error && (
+              <Alert className="mb-4" style={{ backgroundColor: '#B38B00}/10', borderColor: '#166534' }}>
+                <AlertDescription style={{ color: '#166534' }}>{error}</AlertDescription>
+              </Alert>
+            )}
+
+            <div className="space-y-3">
+              <p className="text-sm text-center" style={{ color: '#B38B00' }}>
+                Didn't receive the email?
+              </p>
+              <button
+                onClick={handleResendVerification}
+                disabled={resendLoading}
+                className="w-full h-12 px-4 py-2 rounded-xl font-medium border-2 transition-all duration-200 disabled:opacity-50"
+                style={{ 
+                  borderColor: '#166534',
+                  color: '#166534',
+                  backgroundColor: 'transparent'
+                }}
+              >
+                {resendLoading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin inline mr-2" />
+                    Sending...
+                  </>
+                ) : (
+                  'Resend Verification Email'
+                )}
+              </button>
+              
+              <button
+                onClick={onToggleMode}
+                className="w-full h-12 px-4 py-2 text-white hover:opacity-90 rounded-xl font-medium transition-all duration-200"
+                style={{ 
+                  backgroundColor: '#166534',
+                  boxShadow: '0 4px 8px -2px rgba(22, 101, 52, 0.2)'
+                }}
+              >
+                Back to Sign In
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (success) {
     return (
@@ -79,6 +177,16 @@ export function SignUpForm({ onToggleMode }: SignUpFormProps) {
   return (
     <div className="min-h-screen flex items-center justify-center p-4" style={{ backgroundColor: '#FEF9E7' }}>
       <div className="w-full max-w-md">
+        {/* Back to Home Button */}
+        <button
+          onClick={() => router.push('/')}
+          className="mb-6 flex items-center gap-2 text-sm font-medium hover:underline transition-all group"
+          style={{ color: '#166534' }}
+        >
+          <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" style={{ color: '#B38B00' }} />
+          Back to Home
+        </button>
+
         <div className="text-center mb-8">
           <div className="flex items-center justify-center gap-3">
             <div className="w-12 h-12 flex items-center justify-center rounded-lg" style={{ backgroundColor: '#166534' }}>

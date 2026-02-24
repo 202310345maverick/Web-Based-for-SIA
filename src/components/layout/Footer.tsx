@@ -9,56 +9,6 @@
 import Link from 'next/link';
 import { Mail, Phone, MapPin, Github, Linkedin, Twitter } from 'lucide-react';
 
-interface FooterLink {
-  label: string;
-  href: string;
-  external?: boolean;
-}
-
-interface FooterSection {
-  title: string;
-  links: FooterLink[];
-}
-
-const footerSections: FooterSection[] = [
-  {
-    title: 'Product',
-    links: [
-      { label: 'Features', href: '/#features' },
-      { label: 'Pricing', href: '/#pricing' },
-      { label: 'Documentation', href: '/docs' },
-      { label: 'API Reference', href: '/api' },
-    ],
-  },
-  {
-    title: 'Company',
-    links: [
-      { label: 'About Us', href: '/about' },
-      { label: 'Blog', href: '/blog' },
-      { label: 'Careers', href: '/careers' },
-      { label: 'Contact', href: '/contact' },
-    ],
-  },
-  {
-    title: 'Legal',
-    links: [
-      { label: 'Privacy Policy', href: '/privacy' },
-      { label: 'Terms of Service', href: '/terms' },
-      { label: 'Cookie Policy', href: '/cookies' },
-      { label: 'Disclaimer', href: '/disclaimer' },
-    ],
-  },
-  {
-    title: 'Support',
-    links: [
-      { label: 'Help Center', href: '/help' },
-      { label: 'FAQ', href: '/faq' },
-      { label: 'Report Issue', href: '/report-issue' },
-      { label: 'Feedback', href: '/feedback' },
-    ],
-  },
-];
-
 const contactInfo = [
   {
     icon: Mail,
@@ -166,42 +116,6 @@ export function Footer() {
               );
             })}
           </div>
-        </div>
-
-        <div className="my-8 border-t border-sidebar-border" />
-
-        {/* Links Grid */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-12">
-          {footerSections.map((section) => (
-            <div key={section.title}>
-              <h4 className="font-semibold text-sidebar-foreground mb-4 text-sm">
-                {section.title}
-              </h4>
-              <ul className="space-y-2">
-                {section.links.map((link) => (
-                  <li key={link.label}>
-                    {link.external ? (
-                      <a
-                        href={link.href}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs text-sidebar-foreground/60 hover:text-sidebar-primary transition-colors"
-                      >
-                        {link.label}
-                      </a>
-                    ) : (
-                      <Link
-                        href={link.href}
-                        className="text-xs text-sidebar-foreground/60 hover:text-sidebar-primary transition-colors"
-                      >
-                        {link.label}
-                      </Link>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
         </div>
 
         <div className="my-8 border-t border-sidebar-border" />

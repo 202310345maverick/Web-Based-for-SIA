@@ -36,7 +36,6 @@ import { toast } from "sonner";
 import {
   Search,
   Plus,
-  Trash2,
   Loader2,
   GraduationCap,
   Upload,
@@ -51,7 +50,6 @@ import {
   createClass,
   getClasses,
   updateClass,
-  deleteClass,
   type Class,
   type Student,
 } from "@/services/classService";
