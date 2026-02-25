@@ -48,6 +48,15 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   const processingCanvasRef = useRef<HTMLCanvasElement>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const detectionLoopRef = useRef<number | null>(null);
+  // Temporal stabilization: once markers are found, lock their positions
+  const lockedMarkersRef = useRef<{
+    topLeft: { x: number; y: number };
+    topRight: { x: number; y: number };
+    bottomLeft: { x: number; y: number };
+    bottomRight: { x: number; y: number };
+    stableFrames: number;
+    locked: boolean;
+  } | null>(null);
   
   // State
   const [exam, setExam] = useState<Exam | null>(null);
@@ -148,6 +157,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         cancelAnimationFrame(detectionLoopRef.current);
         detectionLoopRef.current = null;
       }
+      lockedMarkersRef.current = null;
       return;
     }
 
@@ -199,12 +209,80 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         // Detect markers
         const markers = findCornerMarkers(binary, w, h, true);
         
-        const tlOk = markers.topLeft && markers.found;
-        const trOk = markers.topRight && markers.found;
-        const blOk = markers.bottomLeft && markers.found;
-        const brOk = markers.bottomRight && markers.found;
+        // ── Temporal stabilization: lock positions once confidently found ──
+        const LOCK_THRESHOLD = 3;   // frames before hard-lock
+        const DEADZONE = 8;         // pixels — ignore jitter smaller than this
+        const SMOOTH = 0.15;        // EMA weight for new readings (low = more stable)
 
-        setMarkersDetected(markers.found);
+        if (markers.found) {
+          const prev = lockedMarkersRef.current;
+          if (prev) {
+            const dist = (a: {x:number;y:number}, b: {x:number;y:number}) =>
+              Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
+
+            const dtl = dist(prev.topLeft, markers.topLeft);
+            const dtr = dist(prev.topRight, markers.topRight);
+            const dbl = dist(prev.bottomLeft, markers.bottomLeft);
+            const dbr = dist(prev.bottomRight, markers.bottomRight);
+            const maxDrift = Math.max(dtl, dtr, dbl, dbr);
+
+            if (maxDrift < DEADZONE) {
+              // Within deadzone — keep locked positions, bump stable counter
+              prev.stableFrames = Math.min(prev.stableFrames + 1, LOCK_THRESHOLD + 5);
+              if (prev.stableFrames >= LOCK_THRESHOLD) prev.locked = true;
+            } else if (prev.locked && maxDrift < DEADZONE * 4) {
+              // Locked but mild drift — ignore (keeps overlay rock-solid)
+            } else {
+              // Significant movement — sheet repositioned, smoothly follow
+              const blend = (a: {x:number;y:number}, b: {x:number;y:number}) => ({
+                x: a.x + (b.x - a.x) * SMOOTH,
+                y: a.y + (b.y - a.y) * SMOOTH,
+              });
+              prev.topLeft = blend(prev.topLeft, markers.topLeft);
+              prev.topRight = blend(prev.topRight, markers.topRight);
+              prev.bottomLeft = blend(prev.bottomLeft, markers.bottomLeft);
+              prev.bottomRight = blend(prev.bottomRight, markers.bottomRight);
+              prev.stableFrames = 0;
+              prev.locked = false;
+            }
+          } else {
+            // First detection — seed the locked positions
+            lockedMarkersRef.current = {
+              topLeft: { ...markers.topLeft },
+              topRight: { ...markers.topRight },
+              bottomLeft: { ...markers.bottomLeft },
+              bottomRight: { ...markers.bottomRight },
+              stableFrames: 1,
+              locked: false,
+            };
+          }
+        } else {
+          // Markers not found — if previously locked, keep showing locked positions
+          // for a few frames (don't flash). Only clear after sustained loss.
+          if (lockedMarkersRef.current) {
+            lockedMarkersRef.current.stableFrames = Math.max(0, lockedMarkersRef.current.stableFrames - 1);
+            if (lockedMarkersRef.current.stableFrames <= 0) {
+              lockedMarkersRef.current = null;
+            }
+          }
+        }
+
+        // Use stabilized positions for overlay
+        const stable = lockedMarkersRef.current;
+        const displayMarkers = stable ? {
+          found: true,
+          topLeft: stable.topLeft,
+          topRight: stable.topRight,
+          bottomLeft: stable.bottomLeft,
+          bottomRight: stable.bottomRight,
+        } : markers;
+
+        const tlOk = displayMarkers.found;
+        const trOk = displayMarkers.found;
+        const blOk = displayMarkers.found;
+        const brOk = displayMarkers.found;
+
+        setMarkersDetected(displayMarkers.found);
 
         // Draw overlay on the overlay canvas
         const overlay = overlayCanvasRef.current;
@@ -246,21 +324,21 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
               oCtx.stroke();
             };
 
-            drawCorner(markers.topLeft.x, markers.topLeft.y, !!tlOk);
-            drawCorner(markers.topRight.x, markers.topRight.y, !!trOk);
-            drawCorner(markers.bottomLeft.x, markers.bottomLeft.y, !!blOk);
-            drawCorner(markers.bottomRight.x, markers.bottomRight.y, !!brOk);
+            drawCorner(displayMarkers.topLeft.x, displayMarkers.topLeft.y, !!tlOk);
+            drawCorner(displayMarkers.topRight.x, displayMarkers.topRight.y, !!trOk);
+            drawCorner(displayMarkers.bottomLeft.x, displayMarkers.bottomLeft.y, !!blOk);
+            drawCorner(displayMarkers.bottomRight.x, displayMarkers.bottomRight.y, !!brOk);
 
             // Draw connecting lines between markers if all found
-            if (markers.found) {
+            if (displayMarkers.found) {
               oCtx.strokeStyle = 'rgba(34, 197, 94, 0.5)';
               oCtx.lineWidth = 2;
               oCtx.setLineDash([6, 4]);
               oCtx.beginPath();
-              oCtx.moveTo(markers.topLeft.x * scaleX, markers.topLeft.y * scaleY);
-              oCtx.lineTo(markers.topRight.x * scaleX, markers.topRight.y * scaleY);
-              oCtx.lineTo(markers.bottomRight.x * scaleX, markers.bottomRight.y * scaleY);
-              oCtx.lineTo(markers.bottomLeft.x * scaleX, markers.bottomLeft.y * scaleY);
+              oCtx.moveTo(displayMarkers.topLeft.x * scaleX, displayMarkers.topLeft.y * scaleY);
+              oCtx.lineTo(displayMarkers.topRight.x * scaleX, displayMarkers.topRight.y * scaleY);
+              oCtx.lineTo(displayMarkers.bottomRight.x * scaleX, displayMarkers.bottomRight.y * scaleY);
+              oCtx.lineTo(displayMarkers.bottomLeft.x * scaleX, displayMarkers.bottomLeft.y * scaleY);
               oCtx.closePath();
               oCtx.stroke();
               oCtx.setLineDash([]);
