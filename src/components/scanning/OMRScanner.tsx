@@ -277,14 +277,9 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
           bottomRight: stable.bottomRight,
         } : markers;
 
-        const tlOk = displayMarkers.found;
-        const trOk = displayMarkers.found;
-        const blOk = displayMarkers.found;
-        const brOk = displayMarkers.found;
-
         setMarkersDetected(displayMarkers.found);
 
-        // Draw overlay on the overlay canvas
+        // Draw overlay on the overlay canvas — FIXED positions (static viewfinder)
         const overlay = overlayCanvasRef.current;
         if (overlay) {
           const oCtx = overlay.getContext('2d');
@@ -296,53 +291,67 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
 
             const displayW = overlay.offsetWidth;
             const displayH = overlay.offsetHeight;
-            // Scale from detection coords to display coords
-            const scaleX = displayW / w;
-            const scaleY = displayH / h;
 
-            const drawCorner = (cx: number, cy: number, found: boolean) => {
-              const dx = cx * scaleX;
-              const dy = cy * scaleY;
-              const size = 16;
-              
-              oCtx.strokeStyle = found ? '#22c55e' : '#ef4444';
-              oCtx.lineWidth = 3;
-              oCtx.fillStyle = found ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.2)';
-              
-              // Draw a circle at the marker position
+            // Fixed corner positions — static margin from each edge
+            const margin = 24;
+            const cornerLen = 30; // length of each corner bracket arm
+            const found = displayMarkers.found;
+            const color = found ? '#22c55e' : '#ef4444';
+            const fillColor = found ? 'rgba(34, 197, 94, 0.25)' : 'rgba(239, 68, 68, 0.15)';
+
+            oCtx.strokeStyle = color;
+            oCtx.lineWidth = 3;
+            oCtx.lineCap = 'round';
+
+            // Helper: draw an L-shaped corner bracket
+            const drawBracket = (cx: number, cy: number, dirX: number, dirY: number) => {
+              // Small filled circle at the corner point
+              oCtx.fillStyle = fillColor;
               oCtx.beginPath();
-              oCtx.arc(dx, dy, size, 0, Math.PI * 2);
+              oCtx.arc(cx, cy, 6, 0, Math.PI * 2);
               oCtx.fill();
+              oCtx.strokeStyle = color;
               oCtx.stroke();
 
-              // Draw crosshair
+              // L-bracket arms
               oCtx.beginPath();
-              oCtx.moveTo(dx - size * 0.6, dy);
-              oCtx.lineTo(dx + size * 0.6, dy);
-              oCtx.moveTo(dx, dy - size * 0.6);
-              oCtx.lineTo(dx, dy + size * 0.6);
+              oCtx.moveTo(cx + dirX * cornerLen, cy);
+              oCtx.lineTo(cx, cy);
+              oCtx.lineTo(cx, cy + dirY * cornerLen);
               oCtx.stroke();
             };
 
-            drawCorner(displayMarkers.topLeft.x, displayMarkers.topLeft.y, !!tlOk);
-            drawCorner(displayMarkers.topRight.x, displayMarkers.topRight.y, !!trOk);
-            drawCorner(displayMarkers.bottomLeft.x, displayMarkers.bottomLeft.y, !!blOk);
-            drawCorner(displayMarkers.bottomRight.x, displayMarkers.bottomRight.y, !!brOk);
+            // Top-Left (arms go right and down)
+            drawBracket(margin, margin, 1, 1);
+            // Top-Right (arms go left and down)
+            drawBracket(displayW - margin, margin, -1, 1);
+            // Bottom-Left (arms go right and up)
+            drawBracket(margin, displayH - margin, 1, -1);
+            // Bottom-Right (arms go left and up)
+            drawBracket(displayW - margin, displayH - margin, -1, -1);
 
-            // Draw connecting lines between markers if all found
-            if (displayMarkers.found) {
-              oCtx.strokeStyle = 'rgba(34, 197, 94, 0.5)';
-              oCtx.lineWidth = 2;
-              oCtx.setLineDash([6, 4]);
-              oCtx.beginPath();
-              oCtx.moveTo(displayMarkers.topLeft.x * scaleX, displayMarkers.topLeft.y * scaleY);
-              oCtx.lineTo(displayMarkers.topRight.x * scaleX, displayMarkers.topRight.y * scaleY);
-              oCtx.lineTo(displayMarkers.bottomRight.x * scaleX, displayMarkers.bottomRight.y * scaleY);
-              oCtx.lineTo(displayMarkers.bottomLeft.x * scaleX, displayMarkers.bottomLeft.y * scaleY);
-              oCtx.closePath();
-              oCtx.stroke();
-              oCtx.setLineDash([]);
-            }
+            // Static connecting border lines (dashed)
+            oCtx.strokeStyle = found ? 'rgba(34, 197, 94, 0.4)' : 'rgba(239, 68, 68, 0.2)';
+            oCtx.lineWidth = 2;
+            oCtx.setLineDash([6, 4]);
+            oCtx.beginPath();
+            oCtx.moveTo(margin, margin);
+            oCtx.lineTo(displayW - margin, margin);
+            oCtx.lineTo(displayW - margin, displayH - margin);
+            oCtx.lineTo(margin, displayH - margin);
+            oCtx.closePath();
+            oCtx.stroke();
+            oCtx.setLineDash([]);
+
+            // Status label
+            oCtx.font = 'bold 13px sans-serif';
+            oCtx.textAlign = 'center';
+            oCtx.fillStyle = found ? '#22c55e' : '#ef4444';
+            oCtx.fillText(
+              found ? '✓ Markers Detected — Align Sheet' : 'Align Sheet to Corners',
+              displayW / 2,
+              displayH - margin + 16
+            );
           }
         }
       } catch (e) {
