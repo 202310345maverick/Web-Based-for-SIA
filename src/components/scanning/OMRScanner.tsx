@@ -681,7 +681,8 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       
       // Process the image to detect filled bubbles
-      const { studentId, answers, multipleAnswers, idDoubleShades } = await detectBubbles(imageData, exam.num_items, exam.choices_per_item, imageSource || 'upload');
+      const numChoices = exam.choices_per_item || 4;
+      const { studentId, answers, multipleAnswers, idDoubleShades } = await detectBubbles(imageData, exam.num_items, numChoices, imageSource || 'upload');
       
       setDetectedStudentId(studentId);
       setDetectedAnswers(answers);
@@ -1038,7 +1039,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     bubbleDiameterNY: number;
   }
 
-  const getTemplateLayout = (numQuestions: number): TemplateLayout => {
+  const getTemplateLayout = (numQuestions: number, choicesPerQuestion: number = 4): TemplateLayout => {
     const templateType = numQuestions <= 20 ? 20 : numQuestions <= 50 ? 50 : 100;
 
     if (templateType === 20) {
@@ -1114,102 +1115,144 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       };
     }
 
-    // 100‑question full page  210 × 297 mm
-    // Marker centers: TL (3, 3)  BR (200, 213.5)  →  frame 197 × 210.5 mm
-    //
-    // CALIBRATION: The firstBubbleNX values are empirically corrected.
-    // The PDF draws bubbles at bx + numW (numW=12mm from block left edge).
-    // The original NX values were computed from bx alone, causing a leftward
-    // shift of ~1 bubble spacing. Adding 5.0mm corrects this.
-    const fw = 197, fh = 210.5;
-    const xCorrection = 5.0;  // mm – empirical shift to align with actual bubble centers
-    return {
-      id: {
-        // idStartX=21 page mm → (21 - 6.5) = 14.5 mm from TL marker center
-        firstColNX: 14.5 / fw,
-        // idBubbleY=48 page mm (with logo) → (48 - 6.5) = 41.5 mm from TL marker center
-        firstRowNY: 41.5 / fh,
-        colSpacingNX: 4.5 / fw,
-        rowSpacingNY: 4.8 / fh,
-      },
-      answerBlocks: [
-        // Top row (beside ID section)
-        {
-          startQ: 41, endQ: 50,
-          firstBubbleNX: (83.35 + xCorrection) / fw,
-          firstBubbleNY: 45 / fh,
-          bubbleSpacingNX: 5.0 / fw,
-          rowSpacingNY: 4.8 / fh,
+    // 100-question full page 210 × 297 mm
+    // Coordinates computed dynamically to match drawFullSheet() in templatePdfGenerator.ts
+    // This ensures pixel-perfect alignment with the actual PDF bubble positions.
+    {
+      const pageW = 210;
+      const margin = 10;
+      const markerSz = 7;
+      const inset = 3;
+
+      // Marker centers (top markers are FIXED in the PDF)
+      const tlCX = inset + markerSz / 2;                      // 6.5
+      const trCX = pageW - markerSz - inset + markerSz / 2;  // 203.5
+      const tlCY = inset + markerSz / 2;                      // 6.5
+      const fw = trCX - tlCX;                                  // 197
+
+      const lx = margin;      // 10
+      const rx = pageW - margin; // 200
+      const usableW = rx - lx;  // 190
+
+      // PDF layout constants (must match templatePdfGenerator.ts)
+      const bubbleGap = 5.0;   // answer bubble center-to-center
+      const bubbleSz  = 3.8;   // answer bubble diameter
+      const rowH      = 4.8;   // answer row height
+      const numW      = 12;    // space for question number text
+      const idColGap  = 4.5;
+      const idRowH    = 4.8;
+      const idLabelW  = 8;
+      const idPad     = 3;
+      const idBoxH    = 5;
+
+      // Replicate PDF header layout (logo present, no exam code — standard config)
+      let hY = margin + 2;          // 12  (start of content)
+      hY += 12 + 4;                 // 28  (after logo)
+      hY += 5;                      // 33  (after Name/Date fields)
+
+      // ID section
+      const idBorderX  = lx;                              // 10
+      const idContentX = idBorderX + idPad;               // 13
+      const idStartX   = idContentX + idLabelW;           // 21
+      const idContentW = idLabelW + 10 * idColGap;        // 53
+      const idBorderW  = idContentW + idPad * 2;          // 59
+
+      hY += 7;                      // 40  (after ID label)
+      hY += idBoxH + 3;            // 48  (after ID input boxes)
+      const idBubbleY = hY;        // 48
+
+      const idBottomY  = idBubbleY + 10 * idRowH + 2;    // 98
+      const gridStartY = idBottomY + 4;                   // 102
+
+      // ID coordinates relative to TL marker center
+      const idFirstColMM = idStartX - tlCX;               // 14.5
+      const idFirstRowMM = idBubbleY - tlCY;              // 41.5
+
+      // Answer block width (depends on number of choices)
+      const nChoices = choicesPerQuestion;
+      const qBlockW = numW + (nChoices - 1) * bubbleGap + bubbleSz;
+
+      // Top section: Q41-50, Q71-80 positioned beside ID box
+      const afterIdX = idBorderX + idBorderW;             // 69
+      const remainW  = rx - afterIdX;                     // 131
+      const topGap   = (remainW - 2 * qBlockW) / 2;
+      const b41x     = afterIdX + topGap / 2;
+      const b71x     = b41x + qBlockW + topGap;
+      const topBubbleY = idBubbleY + 4.5;                 // 52.5 (after header row)
+
+      // Bottom grid: 4 columns × 2 rows
+      const totalGridW = 4 * qBlockW;
+      const colGap     = (usableW - totalGridW) / 5;
+      const blockVGap  = 10 * rowH + 8;                   // 56
+      const gridBx     = [0, 1, 2, 3].map(c => lx + colGap + c * (qBlockW + colGap));
+
+      const row0BubbleY = gridStartY + 4.5;               // 106.5
+      const row1BubbleY = gridStartY + blockVGap + 4.5;   // 162.5
+
+      // Compute frame height from bottom marker position
+      const maxQY = gridStartY + blockVGap + 4.5 + 10 * rowH; // 210.5
+      const bmY   = maxQY + 3;                             // 213.5
+      const blCY  = bmY + markerSz / 2;                    // 217
+      const fh    = blCY - tlCY;                           // 210.5
+
+      console.log(`[Layout 100q] fw=${fw}, fh=${fh.toFixed(1)}, choices=${nChoices}, qBlockW=${qBlockW.toFixed(1)}, colGap=${colGap.toFixed(1)}`);
+
+      return {
+        id: {
+          firstColNX: idFirstColMM / fw,
+          firstRowNY: idFirstRowMM / fh,
+          colSpacingNX: idColGap / fw,
+          rowSpacingNY: idRowH / fh,
         },
-        {
-          startQ: 71, endQ: 80,
-          firstBubbleNX: (148.85 + xCorrection) / fw,
-          firstBubbleNY: 45 / fh,
-          bubbleSpacingNX: 5.0 / fw,
-          rowSpacingNY: 4.8 / fh,
-        },
-        // Bottom grid – row 0
-        {
-          startQ: 1, endQ: 10,
-          firstBubbleNX: (20.36 + xCorrection) / fw,
-          firstBubbleNY: 99 / fh,
-          bubbleSpacingNX: 5.0 / fw,
-          rowSpacingNY: 4.8 / fh,
-        },
-        {
-          startQ: 21, endQ: 30,
-          firstBubbleNX: (64.52 + xCorrection) / fw,
-          firstBubbleNY: 99 / fh,
-          bubbleSpacingNX: 5.0 / fw,
-          rowSpacingNY: 4.8 / fh,
-        },
-        {
-          startQ: 51, endQ: 60,
-          firstBubbleNX: (108.68 + xCorrection) / fw,
-          firstBubbleNY: 99 / fh,
-          bubbleSpacingNX: 5.0 / fw,
-          rowSpacingNY: 4.8 / fh,
-        },
-        {
-          startQ: 81, endQ: 90,
-          firstBubbleNX: (152.84 + xCorrection) / fw,
-          firstBubbleNY: 99 / fh,
-          bubbleSpacingNX: 5.0 / fw,
-          rowSpacingNY: 4.8 / fh,
-        },
-        // Bottom grid – row 1
-        {
-          startQ: 11, endQ: 20,
-          firstBubbleNX: (20.36 + xCorrection) / fw,
-          firstBubbleNY: 155 / fh,
-          bubbleSpacingNX: 5.0 / fw,
-          rowSpacingNY: 4.8 / fh,
-        },
-        {
-          startQ: 31, endQ: 40,
-          firstBubbleNX: (64.52 + xCorrection) / fw,
-          firstBubbleNY: 155 / fh,
-          bubbleSpacingNX: 5.0 / fw,
-          rowSpacingNY: 4.8 / fh,
-        },
-        {
-          startQ: 61, endQ: 70,
-          firstBubbleNX: (108.68 + xCorrection) / fw,
-          firstBubbleNY: 155 / fh,
-          bubbleSpacingNX: 5.0 / fw,
-          rowSpacingNY: 4.8 / fh,
-        },
-        {
-          startQ: 91, endQ: 100,
-          firstBubbleNX: (152.84 + xCorrection) / fw,
-          firstBubbleNY: 155 / fh,
-          bubbleSpacingNX: 5.0 / fw,
-          rowSpacingNY: 4.8 / fh,
-        },
-      ],
-      bubbleDiameterNX: 3.8 / fw,
-      bubbleDiameterNY: 3.8 / fh,
-    };
+        answerBlocks: [
+          // Top section (beside ID)
+          { startQ: 41, endQ: 50,
+            firstBubbleNX: (b41x + numW - tlCX) / fw,
+            firstBubbleNY: (topBubbleY - tlCY) / fh,
+            bubbleSpacingNX: bubbleGap / fw, rowSpacingNY: rowH / fh },
+          { startQ: 71, endQ: 80,
+            firstBubbleNX: (b71x + numW - tlCX) / fw,
+            firstBubbleNY: (topBubbleY - tlCY) / fh,
+            bubbleSpacingNX: bubbleGap / fw, rowSpacingNY: rowH / fh },
+          // Bottom grid — row 0
+          { startQ: 1,  endQ: 10,
+            firstBubbleNX: (gridBx[0] + numW - tlCX) / fw,
+            firstBubbleNY: (row0BubbleY - tlCY) / fh,
+            bubbleSpacingNX: bubbleGap / fw, rowSpacingNY: rowH / fh },
+          { startQ: 21, endQ: 30,
+            firstBubbleNX: (gridBx[1] + numW - tlCX) / fw,
+            firstBubbleNY: (row0BubbleY - tlCY) / fh,
+            bubbleSpacingNX: bubbleGap / fw, rowSpacingNY: rowH / fh },
+          { startQ: 51, endQ: 60,
+            firstBubbleNX: (gridBx[2] + numW - tlCX) / fw,
+            firstBubbleNY: (row0BubbleY - tlCY) / fh,
+            bubbleSpacingNX: bubbleGap / fw, rowSpacingNY: rowH / fh },
+          { startQ: 81, endQ: 90,
+            firstBubbleNX: (gridBx[3] + numW - tlCX) / fw,
+            firstBubbleNY: (row0BubbleY - tlCY) / fh,
+            bubbleSpacingNX: bubbleGap / fw, rowSpacingNY: rowH / fh },
+          // Bottom grid — row 1
+          { startQ: 11, endQ: 20,
+            firstBubbleNX: (gridBx[0] + numW - tlCX) / fw,
+            firstBubbleNY: (row1BubbleY - tlCY) / fh,
+            bubbleSpacingNX: bubbleGap / fw, rowSpacingNY: rowH / fh },
+          { startQ: 31, endQ: 40,
+            firstBubbleNX: (gridBx[1] + numW - tlCX) / fw,
+            firstBubbleNY: (row1BubbleY - tlCY) / fh,
+            bubbleSpacingNX: bubbleGap / fw, rowSpacingNY: rowH / fh },
+          { startQ: 61, endQ: 70,
+            firstBubbleNX: (gridBx[2] + numW - tlCX) / fw,
+            firstBubbleNY: (row1BubbleY - tlCY) / fh,
+            bubbleSpacingNX: bubbleGap / fw, rowSpacingNY: rowH / fh },
+          { startQ: 91, endQ: 100,
+            firstBubbleNX: (gridBx[3] + numW - tlCX) / fw,
+            firstBubbleNY: (row1BubbleY - tlCY) / fh,
+            bubbleSpacingNX: bubbleGap / fw, rowSpacingNY: rowH / fh },
+        ],
+        bubbleDiameterNX: bubbleSz / fw,
+        bubbleDiameterNY: bubbleSz / fh,
+      };
+    }
   };
 
   // ─── FAST BACKGROUND SUBTRACTION (lighting normalization) ───
@@ -1413,7 +1456,8 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     }
 
     // 6. Get template layout for this exam's question count
-    const layout = getTemplateLayout(numQuestions);
+    const effectiveChoices = choicesPerQuestion || 4;
+    const layout = getTemplateLayout(numQuestions, effectiveChoices);
 
     // 7. Detect student ID and answers
     // Both camera and upload now benefit from background-subtracted grayscale
@@ -1607,9 +1651,9 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
 
     // Adaptive threshold: filled bubbles are statistical outliers
     // Threshold = midpoint between typical (unfilled) and strong fills
-    const baseThreshold = isCamera ? 0.08 : 0.18;
-    const ID_FILL_THRESHOLD = Math.max(baseThreshold, median + (q90 - median) * 0.35);
-    const ID_DOUBLE_SHADE_RATIO = 0.50;
+    const baseThreshold = isCamera ? 0.05 : 0.10;
+    const ID_FILL_THRESHOLD = Math.max(baseThreshold, median + (q90 - median) * 0.25);
+    const ID_DOUBLE_SHADE_RATIO = 0.55;
 
     console.log(`[ID] Stats: median=${median.toFixed(3)}, q75=${q75.toFixed(3)}, q90=${q90.toFixed(3)}, adaptiveThreshold=${ID_FILL_THRESHOLD.toFixed(3)}`);
 
@@ -1705,9 +1749,9 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     const q90 = allFillValues[Math.floor(allFillValues.length * 0.90)];
 
     // The threshold separates unfilled (noise) from filled bubbles
-    const baseThreshold = isCamera ? 0.06 : 0.15;
-    const FILL_THRESHOLD = Math.max(baseThreshold, median + (q90 - median) * 0.30);
-    const MULTI_ANSWER_RATIO = 0.40;
+    const baseThreshold = isCamera ? 0.04 : 0.08;
+    const FILL_THRESHOLD = Math.max(baseThreshold, median + (q90 - median) * 0.25);
+    const MULTI_ANSWER_RATIO = 0.45;
 
     console.log(`[ANS] Stats: median=${median.toFixed(3)}, q75=${q75.toFixed(3)}, q90=${q90.toFixed(3)}, adaptiveThreshold=${FILL_THRESHOLD.toFixed(3)}`);
 
@@ -1731,9 +1775,9 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         const avgOther = otherFills.reduce((a, b) => a + b, 0) / otherFills.length;
         const contrast = maxFill / Math.max(0.001, avgOther);
 
-        // For camera: require at least 1.8x contrast; for upload: 1.5x
-        const minContrast = isCamera ? 1.8 : 1.5;
-        if (contrast < minContrast && maxFill < FILL_THRESHOLD * 1.5) {
+        // Noise rejection: only reject if very low contrast AND weak fill
+        const minContrast = isCamera ? 1.3 : 1.2;
+        if (contrast < minContrast && maxFill < FILL_THRESHOLD * 1.3) {
           console.log(`[ANS] Q${q}: rejected weak detection ${selectedChoice}=${maxFill.toFixed(3)} (contrast=${contrast.toFixed(2)}, avgOther=${avgOther.toFixed(3)})`);
           selectedChoice = '';
           maxFill = 0;
