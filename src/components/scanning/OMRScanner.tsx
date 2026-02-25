@@ -770,8 +770,9 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     const searchFraction = isCamera ? 0.35 : 0.30;
     const minDensityThreshold = isCamera ? 0.25 : 0.35;
 
-    // Phase 1: Coarse scan — only accepts solid, square-shaped dark regions
-    // This filters out answer bubbles (round), text (elongated), and scattered dark pixels
+    // Phase 1: Coarse scan — density-based with soft shape preference
+    // Shape quality (uniformity, border fill) acts as a SCORING bonus, not a hard reject.
+    // This ensures real markers are always found even with perspective distortion or noise.
     const findMarkerInRegion = (
       rx1: number, ry1: number, rx2: number, ry2: number
     ): { x: number; y: number; density: number; size: number } => {
@@ -789,7 +790,6 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
           for (let x = rx1; x <= rx2 - markerSize; x += step) {
             let filled = 0;
             let total = 0;
-            // Also track per-quadrant fill to verify squareness
             let q1 = 0, q2 = 0, q3 = 0, q4 = 0;
             let qt1 = 0, qt2 = 0, qt3 = 0, qt4 = 0;
             const halfM = markerSize / 2;
@@ -801,7 +801,6 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
                 const val = binary[py * width + px];
                 filled += val;
                 total++;
-                // Quadrant tracking
                 if (dx < halfM && dy < halfM) { q1 += val; qt1++; }
                 else if (dx >= halfM && dy < halfM) { q2 += val; qt2++; }
                 else if (dx < halfM && dy >= halfM) { q3 += val; qt3++; }
@@ -812,9 +811,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
             const density = total > 0 ? filled / total : 0;
             if (density < minDensityThreshold) continue;
 
-            // ── SQUARENESS CHECK ──
-            // A solid filled square has all 4 quadrants roughly equally filled.
-            // Answer bubbles (round) or text will have uneven quadrant fill.
+            // Soft shape scoring — these are bonuses, not hard gates
             const qd1 = qt1 > 0 ? q1 / qt1 : 0;
             const qd2 = qt2 > 0 ? q2 / qt2 : 0;
             const qd3 = qt3 > 0 ? q3 / qt3 : 0;
@@ -823,37 +820,9 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
             const qMax = Math.max(qd1, qd2, qd3, qd4);
             const uniformity = qMax > 0 ? qMin / qMax : 0;
 
-            // Require all quadrants to be at least 40% as filled as the densest one
-            if (uniformity < 0.40) continue;
-
-            // ── BORDER CHECK ──
-            // A solid square marker should also have filled pixels along all 4 edges.
-            // Bubbles have empty centers or hollow edges.
-            let topEdgeFill = 0, botEdgeFill = 0, leftEdgeFill = 0, rightEdgeFill = 0;
-            let edgeSamples = 0;
-            for (let d = 0; d < markerSize; d += sampleStep) {
-              // Top edge
-              const tx = Math.min(width - 1, x + d), ty = Math.min(height - 1, y);
-              topEdgeFill += binary[ty * width + tx];
-              // Bottom edge
-              const bx = Math.min(width - 1, x + d), by = Math.min(height - 1, y + markerSize - 1);
-              botEdgeFill += binary[by * width + bx];
-              // Left edge
-              const lx2 = Math.min(width - 1, x), ly = Math.min(height - 1, y + d);
-              leftEdgeFill += binary[ly * width + lx2];
-              // Right edge
-              const rx2 = Math.min(width - 1, x + markerSize - 1), ry = Math.min(height - 1, y + d);
-              rightEdgeFill += binary[ry * width + rx2];
-              edgeSamples++;
-            }
-            const edgeDensity = edgeSamples > 0
-              ? Math.min(topEdgeFill, botEdgeFill, leftEdgeFill, rightEdgeFill) / edgeSamples
-              : 0;
-            // All 4 edges should be at least 30% filled
-            if (edgeDensity < 0.30) continue;
-
-            // Score = density × uniformity — prefers solid, uniform squares
-            const score = density * uniformity;
+            // Score = density × (1 + uniformity bonus)
+            // Solid squares get up to 2× score boost; poor shapes still compete on density
+            const score = density * (1 + uniformity);
             if (score > bestScore) {
               bestScore = score;
               bestDensity = density;
@@ -939,19 +908,19 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       }
 
       if (count > 0) {
-        // Validate the blob is roughly square — reject elongated features (text, lines)
+        // Validate the blob shape — reject only extreme non-markers (very elongated text/lines)
         const blobW = maxBX - minBX + 1;
         const blobH = maxBY - minBY + 1;
         const aspect = Math.min(blobW, blobH) / Math.max(blobW, blobH);
-        if (aspect < 0.55) {
-          console.log(`[OMR] Rejected flood-fill blob: ${blobW}x${blobH}, aspect=${aspect.toFixed(2)}, not square enough`);
+        if (aspect < 0.30) {
+          console.log(`[OMR] Rejected flood-fill blob: ${blobW}x${blobH}, aspect=${aspect.toFixed(2)}, too elongated`);
           return { x: cx, y: cy, area: 0 };
         }
-        // Bounding-box fill ratio: solid squares fill ~100% of bbox, circles ~78%
+        // Bounding-box fill ratio — only reject very sparse clusters
         const bboxArea = blobW * blobH;
         const fillRatio = count / bboxArea;
-        if (fillRatio < 0.65) {
-          console.log(`[OMR] Rejected flood-fill blob: fillRatio=${fillRatio.toFixed(2)}, too sparse for a solid marker`);
+        if (fillRatio < 0.35) {
+          console.log(`[OMR] Rejected flood-fill blob: fillRatio=${fillRatio.toFixed(2)}, too sparse`);
           return { x: cx, y: cy, area: 0 };
         }
         return { x: sumX / count, y: sumY / count, area: count };
@@ -1424,14 +1393,21 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       }
       const rawMarkers = findCornerMarkers(rawBinary, width, height, isCamera);
       console.log('[OMR] Raw retry markers found:', rawMarkers.found);
-      effectiveMarkers = rawMarkers.found
-        ? rawMarkers
-        : {
-            topLeft: { x: width * 0.02, y: height * 0.02 },
-            topRight: { x: width * 0.98, y: height * 0.02 },
-            bottomLeft: { x: width * 0.02, y: height * 0.98 },
-            bottomRight: { x: width * 0.98, y: height * 0.98 },
-          };
+      if (rawMarkers.found) {
+        effectiveMarkers = rawMarkers;
+      } else {
+        // Fallback: estimate marker positions from image geometry
+        // For a properly framed sheet, markers are inset ~4-7% from edges
+        const insetX = width * 0.05;
+        const insetY = height * 0.05;
+        effectiveMarkers = {
+          topLeft: { x: insetX, y: insetY },
+          topRight: { x: width - insetX, y: insetY },
+          bottomLeft: { x: insetX, y: height - insetY },
+          bottomRight: { x: width - insetX, y: height - insetY },
+        };
+        console.log(`[OMR] Using fallback marker positions: inset=${insetX.toFixed(0)}px from edges`);
+      }
     } else {
       effectiveMarkers = markers;
     }
@@ -1608,7 +1584,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     // Pass 1: Collect ALL fill values across all ID columns to compute statistics
     const allIdFills: number[][] = [];
     const allFillValues: number[] = [];
-    for (let col = 0; col < 9; col++) {
+    for (let col = 0; col < 10; col++) {
       const colFills: number[] = [];
       for (let row = 0; row < 10; row++) {
         const nx = id.firstColNX + col * id.colSpacingNX;
@@ -1638,7 +1614,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     console.log(`[ID] Stats: median=${median.toFixed(3)}, q75=${q75.toFixed(3)}, q90=${q90.toFixed(3)}, adaptiveThreshold=${ID_FILL_THRESHOLD.toFixed(3)}`);
 
     // Pass 2: Detect digits using adaptive threshold
-    for (let col = 0; col < 9; col++) {
+    for (let col = 0; col < 10; col++) {
       const fills = allIdFills[col];
       let maxFill = 0;
       let detectedDigit = 0;
