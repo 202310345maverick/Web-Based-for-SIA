@@ -356,55 +356,74 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     }
   };
 
-  // Pre-process camera image: find the paper region and crop/straighten it
+  // ─── AUTO-CROP & CONTRAST ENHANCEMENT for camera images ───
   const preprocessCameraImage = (canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D): string => {
     const width = canvas.width;
     const height = canvas.height;
     const imgData = ctx.getImageData(0, 0, width, height);
     const data = imgData.data;
 
-    // Convert to grayscale
+    // 1. Convert to grayscale
     const gray = new Uint8Array(width * height);
     for (let i = 0; i < data.length; i += 4) {
       gray[i / 4] = Math.round(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]);
     }
 
-    // Find the paper boundary using edge detection on rows and columns
-    // Paper is bright, background (desk/screen edges) is typically darker
-    // We look for the bounding box of the bright region
+    // 2. Compute Sobel-like gradient magnitude for edge detection
+    const gradient = new Float64Array(width * height);
+    for (let y = 1; y < height - 1; y++) {
+      for (let x = 1; x < width - 1; x++) {
+        const gx = -gray[(y-1)*width+(x-1)] + gray[(y-1)*width+(x+1)]
+                   -2*gray[y*width+(x-1)] + 2*gray[y*width+(x+1)]
+                   -gray[(y+1)*width+(x-1)] + gray[(y+1)*width+(x+1)];
+        const gy = -gray[(y-1)*width+(x-1)] - 2*gray[(y-1)*width+x] - gray[(y-1)*width+(x+1)]
+                   +gray[(y+1)*width+(x-1)] + 2*gray[(y+1)*width+x] + gray[(y+1)*width+(x+1)];
+        gradient[y * width + x] = Math.sqrt(gx * gx + gy * gy);
+      }
+    }
+
+    // 3. Row/column brightness AND gradient analysis
     const rowBrightness = new Float64Array(height);
     const colBrightness = new Float64Array(width);
-    
+    const rowGradient = new Float64Array(height);
+    const colGradient = new Float64Array(width);
+
     for (let y = 0; y < height; y++) {
-      let sum = 0;
+      let bSum = 0, gSum = 0;
       for (let x = 0; x < width; x++) {
-        sum += gray[y * width + x];
+        bSum += gray[y * width + x];
+        gSum += gradient[y * width + x];
       }
-      rowBrightness[y] = sum / width;
+      rowBrightness[y] = bSum / width;
+      rowGradient[y] = gSum / width;
     }
-    
     for (let x = 0; x < width; x++) {
-      let sum = 0;
+      let bSum = 0, gSum = 0;
       for (let y = 0; y < height; y++) {
-        sum += gray[y * width + x];
+        bSum += gray[y * width + x];
+        gSum += gradient[y * width + x];
       }
-      colBrightness[x] = sum / height;
+      colBrightness[x] = bSum / height;
+      colGradient[x] = gSum / height;
     }
 
-    // Compute the median brightness to determine a threshold for "paper"
+    // 4. Adaptive thresholds using percentile statistics
     const sortedRow = Array.from(rowBrightness).sort((a, b) => a - b);
     const sortedCol = Array.from(colBrightness).sort((a, b) => a - b);
-    const medianRow = sortedRow[Math.floor(sortedRow.length / 2)];
-    const medianCol = sortedCol[Math.floor(sortedCol.length / 2)];
-    
-    // Paper threshold: we look for rows/cols that are at least 70% of median brightness
-    const paperThreshRow = medianRow * 0.70;
-    const paperThreshCol = medianCol * 0.70;
+    const medianRow = sortedRow[Math.floor(sortedRow.length * 0.5)];
+    const medianCol = sortedCol[Math.floor(sortedCol.length * 0.5)];
+    const sortedRowGrad = Array.from(rowGradient).sort((a, b) => a - b);
+    const sortedColGrad = Array.from(colGradient).sort((a, b) => a - b);
+    const edgeThreshRow = sortedRowGrad[Math.floor(sortedRowGrad.length * 0.6)];
+    const edgeThreshCol = sortedColGrad[Math.floor(sortedColGrad.length * 0.6)];
 
-    // Find the bounds of the paper region
+    const paperThreshRow = medianRow * 0.65;
+    const paperThreshCol = medianCol * 0.65;
+
+    // 5. Detect paper boundary using brightness + edge refinement
     let top = 0, bottom = height - 1, left = 0, right = width - 1;
-    
-    // Scan from edges inward to find where paper starts
+
+    // Find initial bounds from brightness
     for (let y = 0; y < height; y++) {
       if (rowBrightness[y] > paperThreshRow) { top = y; break; }
     }
@@ -418,33 +437,115 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       if (colBrightness[x] > paperThreshCol) { right = x; break; }
     }
 
-    // Add small padding (2% of detected region)
-    const padX = Math.floor((right - left) * 0.02);
-    const padY = Math.floor((bottom - top) * 0.02);
+    // Refine using gradient peaks (paper edge has high gradient)
+    const refineRange = Math.floor(Math.min(width, height) * 0.05);
+    for (let y = Math.min(top + refineRange, height - 1); y >= Math.max(0, top - refineRange); y--) {
+      if (rowGradient[y] > edgeThreshRow * 1.5 && rowBrightness[y] > paperThreshRow * 0.8) { top = y; break; }
+    }
+    for (let y = Math.max(bottom - refineRange, 0); y <= Math.min(height - 1, bottom + refineRange); y++) {
+      if (rowGradient[y] > edgeThreshRow * 1.5 && rowBrightness[y] > paperThreshRow * 0.8) { bottom = y; break; }
+    }
+    for (let x = Math.min(left + refineRange, width - 1); x >= Math.max(0, left - refineRange); x--) {
+      if (colGradient[x] > edgeThreshCol * 1.5 && colBrightness[x] > paperThreshCol * 0.8) { left = x; break; }
+    }
+    for (let x = Math.max(right - refineRange, 0); x <= Math.min(width - 1, right + refineRange); x++) {
+      if (colGradient[x] > edgeThreshCol * 1.5 && colBrightness[x] > paperThreshCol * 0.8) { right = x; break; }
+    }
+
+    // Add padding (1.5%)
+    const padX = Math.floor((right - left) * 0.015);
+    const padY = Math.floor((bottom - top) * 0.015);
     top = Math.max(0, top - padY);
     bottom = Math.min(height - 1, bottom + padY);
     left = Math.max(0, left - padX);
     right = Math.min(width - 1, right + padX);
 
-    // Only crop if the detected region is significantly smaller than the full image
     const cropW = right - left + 1;
     const cropH = bottom - top + 1;
-    
-    if (cropW < width * 0.92 || cropH < height * 0.92) {
-      // Crop to paper region
-      const croppedCanvas = document.createElement('canvas');
-      croppedCanvas.width = cropW;
-      croppedCanvas.height = cropH;
-      const croppedCtx = croppedCanvas.getContext('2d');
-      if (croppedCtx) {
-        croppedCtx.drawImage(canvas, left, top, cropW, cropH, 0, 0, cropW, cropH);
+
+    // 6. Crop (if needed) and apply contrast enhancement
+    const outputCanvas = document.createElement('canvas');
+    const shouldCrop = cropW < width * 0.94 || cropH < height * 0.94;
+
+    if (shouldCrop) {
+      outputCanvas.width = cropW;
+      outputCanvas.height = cropH;
+      const outCtx = outputCanvas.getContext('2d');
+      if (outCtx) {
+        outCtx.drawImage(canvas, left, top, cropW, cropH, 0, 0, cropW, cropH);
         console.log(`[Camera] Cropped image from ${width}x${height} to ${cropW}x${cropH} (paper region)`);
-        return croppedCanvas.toDataURL('image/png');
+        applyContrastEnhancement(outCtx, cropW, cropH);
+        return outputCanvas.toDataURL('image/png');
       }
     }
 
-    console.log('[Camera] No significant crop needed, using full frame');
+    // No significant crop; still enhance contrast
+    outputCanvas.width = width;
+    outputCanvas.height = height;
+    const outCtx = outputCanvas.getContext('2d');
+    if (outCtx) {
+      outCtx.drawImage(canvas, 0, 0);
+      applyContrastEnhancement(outCtx, width, height);
+      console.log('[Camera] Applied contrast enhancement (no crop needed)');
+      return outputCanvas.toDataURL('image/png');
+    }
+
     return canvas.toDataURL('image/png');
+  };
+
+  // ─── CANVAS CONTRAST ENHANCEMENT (white balance + local normalization) ───
+  const applyContrastEnhancement = (ctx: CanvasRenderingContext2D, w: number, h: number) => {
+    const imgData = ctx.getImageData(0, 0, w, h);
+    const d = imgData.data;
+
+    // White balance: find 95th percentile of brightness and scale to 255
+    const brightness: number[] = [];
+    for (let i = 0; i < d.length; i += 16) { // sample every 4th pixel for speed
+      brightness.push(Math.max(d[i], d[i + 1], d[i + 2]));
+    }
+    brightness.sort((a, b) => a - b);
+    const whitePoint = brightness[Math.floor(brightness.length * 0.95)];
+    const blackPoint = brightness[Math.floor(brightness.length * 0.02)];
+    const range = Math.max(1, whitePoint - blackPoint);
+    const scale = 255 / range;
+
+    // Apply white balance + contrast stretch
+    for (let i = 0; i < d.length; i += 4) {
+      d[i]     = Math.min(255, Math.max(0, Math.round((d[i] - blackPoint) * scale)));
+      d[i + 1] = Math.min(255, Math.max(0, Math.round((d[i + 1] - blackPoint) * scale)));
+      d[i + 2] = Math.min(255, Math.max(0, Math.round((d[i + 2] - blackPoint) * scale)));
+    }
+
+    // Mild sharpening via unsharp mask (3x3 approximation)
+    const gray = new Uint8Array(w * h);
+    for (let i = 0; i < d.length; i += 4) {
+      gray[i / 4] = Math.round(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]);
+    }
+    // Box blur for unsharp mask
+    const blurred = new Uint8Array(w * h);
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        let s = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            s += gray[(y + dy) * w + (x + dx)];
+          }
+        }
+        blurred[y * w + x] = Math.round(s / 9);
+      }
+    }
+    // Apply mild sharpening: original + 0.3 * (original - blurred)
+    const sharpenAmount = 0.3;
+    for (let i = 0; i < d.length; i += 4) {
+      const idx = i / 4;
+      const diff = gray[idx] - blurred[idx];
+      const factor = gray[idx] > 0 ? Math.max(0.8, Math.min(1.5, (gray[idx] + diff * sharpenAmount) / gray[idx])) : 1;
+      d[i]     = Math.min(255, Math.max(0, Math.round(d[i] * factor)));
+      d[i + 1] = Math.min(255, Math.max(0, Math.round(d[i + 1] * factor)));
+      d[i + 2] = Math.min(255, Math.max(0, Math.round(d[i + 2] * factor)));
+    }
+
+    ctx.putImageData(imgData, 0, 0);
   };
 
   // Handle file upload
@@ -557,7 +658,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     }
   }, [capturedImage, exam, answerKey, classData, imageSource]);
 
-  // ─── CORNER MARKER DETECTION ───
+  // ─── CORNER MARKER DETECTION (Enhanced with refinement & validation) ───
   const findCornerMarkers = (
     binary: Uint8Array,
     width: number,
@@ -573,19 +674,23 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     const minDim = Math.min(width, height);
     const baseMarkerSize = Math.max(12, Math.floor(minDim * 0.04));
 
-    // Camera: multi-scale search with wider area; Upload: original single-scale, tighter area
-    const markerSizes = isCamera
-      ? [baseMarkerSize, Math.floor(baseMarkerSize * 0.7), Math.floor(baseMarkerSize * 1.4)]
-      : [baseMarkerSize];
+    // Multi-scale search sizes — always use 3 scales for robustness
+    const markerSizes = [
+      Math.floor(baseMarkerSize * 0.6),
+      baseMarkerSize,
+      Math.floor(baseMarkerSize * 1.5),
+    ];
     const searchFraction = isCamera ? 0.35 : 0.30;
-    const minDensityThreshold = isCamera ? 0.30 : 0.40;
+    const minDensityThreshold = isCamera ? 0.25 : 0.35;
 
+    // Phase 1: Coarse scan with density-based detection
     const findMarkerInRegion = (
       rx1: number, ry1: number, rx2: number, ry2: number
-    ): { x: number; y: number; density: number } => {
+    ): { x: number; y: number; density: number; size: number } => {
       let bestX = (rx1 + rx2) / 2;
       let bestY = (ry1 + ry2) / 2;
       let bestDensity = 0;
+      let bestSize = baseMarkerSize;
 
       for (const markerSize of markerSizes) {
         const step = Math.max(1, Math.floor(markerSize / 5));
@@ -607,28 +712,100 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
               bestDensity = density;
               bestX = x + markerSize / 2;
               bestY = y + markerSize / 2;
+              bestSize = markerSize;
             }
           }
         }
       }
-      return { x: bestX, y: bestY, density: bestDensity };
+      return { x: bestX, y: bestY, density: bestDensity, size: bestSize };
+    };
+
+    // Phase 2: Centroid refinement — compute weighted center of dark pixels around initial detection
+    const refineMarkerCenter = (
+      cx: number, cy: number, markerSize: number
+    ): { x: number; y: number } => {
+      const radius = Math.floor(markerSize * 0.8);
+      let sumX = 0, sumY = 0, totalWeight = 0;
+
+      for (let dy = -radius; dy <= radius; dy++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+          const px = Math.round(cx + dx);
+          const py = Math.round(cy + dy);
+          if (px >= 0 && px < width && py >= 0 && py < height) {
+            const weight = binary[py * width + px];
+            if (weight > 0) {
+              sumX += px * weight;
+              sumY += py * weight;
+              totalWeight += weight;
+            }
+          }
+        }
+      }
+
+      if (totalWeight > 0) {
+        return { x: sumX / totalWeight, y: sumY / totalWeight };
+      }
+      return { x: cx, y: cy };
     };
 
     const cW = Math.floor(width * searchFraction);
     const cH = Math.floor(height * searchFraction);
 
-    const tl = findMarkerInRegion(0, 0, cW, cH);
-    const tr = findMarkerInRegion(width - cW, 0, width, cH);
-    const bl = findMarkerInRegion(0, height - cH, cW, height);
-    const br = findMarkerInRegion(width - cW, height - cH, width, height);
+    const tlRaw = findMarkerInRegion(0, 0, cW, cH);
+    const trRaw = findMarkerInRegion(width - cW, 0, width, cH);
+    const blRaw = findMarkerInRegion(0, height - cH, cW, height);
+    const brRaw = findMarkerInRegion(width - cW, height - cH, width, height);
 
-    const markersValid = tl.density > minDensityThreshold &&
+    // Phase 2: Refine centers if density is sufficient
+    const tl = tlRaw.density > minDensityThreshold
+      ? { ...refineMarkerCenter(tlRaw.x, tlRaw.y, tlRaw.size), density: tlRaw.density }
+      : tlRaw;
+    const tr = trRaw.density > minDensityThreshold
+      ? { ...refineMarkerCenter(trRaw.x, trRaw.y, trRaw.size), density: trRaw.density }
+      : trRaw;
+    const bl = blRaw.density > minDensityThreshold
+      ? { ...refineMarkerCenter(blRaw.x, blRaw.y, blRaw.size), density: blRaw.density }
+      : blRaw;
+    const br = brRaw.density > minDensityThreshold
+      ? { ...refineMarkerCenter(brRaw.x, brRaw.y, brRaw.size), density: brRaw.density }
+      : brRaw;
+
+    // Phase 3: Geometric validation
+    const densitiesValid = tl.density > minDensityThreshold &&
       tr.density > minDensityThreshold &&
       bl.density > minDensityThreshold &&
       br.density > minDensityThreshold;
-    
+
+    let geometryValid = false;
+    if (densitiesValid) {
+      // Check that markers form a roughly rectangular quadrilateral
+      const topEdge = Math.sqrt((tr.x - tl.x) ** 2 + (tr.y - tl.y) ** 2);
+      const bottomEdge = Math.sqrt((br.x - bl.x) ** 2 + (br.y - bl.y) ** 2);
+      const leftEdge = Math.sqrt((bl.x - tl.x) ** 2 + (bl.y - tl.y) ** 2);
+      const rightEdge = Math.sqrt((br.x - tr.x) ** 2 + (br.y - tr.y) ** 2);
+
+      // Edges should be roughly parallel (ratio between 0.7 and 1.4)
+      const hRatio = Math.min(topEdge, bottomEdge) / Math.max(topEdge, bottomEdge);
+      const vRatio = Math.min(leftEdge, rightEdge) / Math.max(leftEdge, rightEdge);
+
+      // Diagonals should be roughly equal
+      const diag1 = Math.sqrt((br.x - tl.x) ** 2 + (br.y - tl.y) ** 2);
+      const diag2 = Math.sqrt((bl.x - tr.x) ** 2 + (bl.y - tr.y) ** 2);
+      const diagRatio = Math.min(diag1, diag2) / Math.max(diag1, diag2);
+
+      // Minimum size: markers should span at least 30% of image
+      const minSpan = minDim * 0.3;
+      const spansOk = topEdge > minSpan && leftEdge > minSpan;
+
+      geometryValid = hRatio > 0.7 && vRatio > 0.7 && diagRatio > 0.8 && spansOk;
+
+      console.log(`[OMR] Geometry check: hRatio=${hRatio.toFixed(2)}, vRatio=${vRatio.toFixed(2)}, diagRatio=${diagRatio.toFixed(2)}, spansOk=${spansOk}, valid=${geometryValid}`);
+    }
+
+    const markersValid = densitiesValid && geometryValid;
+
     console.log(`[OMR] Marker detection (${isCamera ? 'camera' : 'upload'}): densities TL=${tl.density.toFixed(2)}, TR=${tr.density.toFixed(2)}, BL=${bl.density.toFixed(2)}, BR=${br.density.toFixed(2)}, threshold=${minDensityThreshold}, found=${markersValid}`);
-    
+
     return {
       found: markersValid,
       topLeft: { x: tl.x, y: tl.y },
@@ -855,7 +1032,79 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     };
   };
 
-  // ─── MAIN DETECTION PIPELINE ───
+  // ─── FAST BACKGROUND SUBTRACTION (lighting normalization) ───
+  const subtractBackground = (
+    gray: Uint8Array,
+    width: number,
+    height: number
+  ): Uint8Array => {
+    // Downsample by 8x, compute local max (background estimate), then bilinear upsample
+    const factor = 8;
+    const sW = Math.ceil(width / factor);
+    const sH = Math.ceil(height / factor);
+
+    // Each block’s max = local paper brightness (background)
+    const bgSmall = new Uint8Array(sW * sH);
+    for (let sy = 0; sy < sH; sy++) {
+      for (let sx = 0; sx < sW; sx++) {
+        let maxVal = 0;
+        for (let dy = 0; dy < factor; dy++) {
+          for (let dx = 0; dx < factor; dx++) {
+            const ox = sx * factor + dx;
+            const oy = sy * factor + dy;
+            if (ox < width && oy < height) {
+              maxVal = Math.max(maxVal, gray[oy * width + ox]);
+            }
+          }
+        }
+        bgSmall[sy * sW + sx] = maxVal;
+      }
+    }
+
+    // Smooth the background estimate (3x3 box blur on small image)
+    const bgBlurred = new Uint8Array(sW * sH);
+    for (let sy = 0; sy < sH; sy++) {
+      for (let sx = 0; sx < sW; sx++) {
+        let sum = 0, count = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const ny = sy + dy, nx = sx + dx;
+            if (ny >= 0 && ny < sH && nx >= 0 && nx < sW) {
+              sum += bgSmall[ny * sW + nx];
+              count++;
+            }
+          }
+        }
+        bgBlurred[sy * sW + sx] = Math.round(sum / count);
+      }
+    }
+
+    // Bilinear upsample and normalize: pixel / background * 255
+    const normalized = new Uint8Array(width * height);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const sx = (x / factor) - 0.5;
+        const sy = (y / factor) - 0.5;
+        const x0 = Math.max(0, Math.floor(sx));
+        const y0 = Math.max(0, Math.floor(sy));
+        const x1 = Math.min(sW - 1, x0 + 1);
+        const y1 = Math.min(sH - 1, y0 + 1);
+        const fx = Math.max(0, sx - x0);
+        const fy = Math.max(0, sy - y0);
+
+        const bg = (1 - fx) * (1 - fy) * bgBlurred[y0 * sW + x0]
+                 + fx * (1 - fy) * bgBlurred[y0 * sW + x1]
+                 + (1 - fx) * fy * bgBlurred[y1 * sW + x0]
+                 + fx * fy * bgBlurred[y1 * sW + x1];
+
+        const bgVal = Math.max(1, bg);
+        normalized[y * width + x] = Math.min(255, Math.round((gray[y * width + x] / bgVal) * 255));
+      }
+    }
+    return normalized;
+  };
+
+  // ─── MAIN DETECTION PIPELINE (Enhanced) ───
   const detectBubbles = async (
     imageData: ImageData,
     numQuestions: number,
@@ -865,17 +1114,22 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     const { data, width, height } = imageData;
     const isCamera = source === 'camera';
 
-    console.log(`[OMR] Detection mode: ${source.toUpperCase()}`);
+    console.log(`[OMR] Detection mode: ${source.toUpperCase()}, size: ${width}x${height}`);
 
     // 1. Convert to grayscale
-    const grayscale = new Uint8Array(width * height);
+    const rawGrayscale = new Uint8Array(width * height);
     for (let i = 0; i < data.length; i += 4) {
-      grayscale[i / 4] = Math.round(
+      rawGrayscale[i / 4] = Math.round(
         0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]
       );
     }
 
-    // 2. Compute integral image for fast adaptive thresholding
+    // 2. Background subtraction for lighting normalization
+    // This equalises uneven lighting from camera flash, shadows, etc.
+    const grayscale = subtractBackground(rawGrayscale, width, height);
+    console.log('[OMR] Background subtraction applied');
+
+    // 3. Compute integral image for fast adaptive thresholding
     const integral = new Float64Array(width * height);
     for (let y = 0; y < height; y++) {
       let rowSum = 0;
@@ -885,20 +1139,21 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       }
     }
 
-    // 3. Adaptive threshold — different parameters for camera vs upload
+    // 4. Adaptive threshold — tuned per source, benefits from normalized input
     const globalThreshold = calculateOtsuThreshold(grayscale);
     const binary = new Uint8Array(width * height);
 
     if (isCamera) {
-      // Camera: larger block, proportional offset for uneven lighting
-      const halfBlock = Math.max(15, Math.floor(Math.min(width, height) / 20));
+      // Camera: larger block, dynamic offset based on mean brightness
+      const halfBlock = Math.max(15, Math.floor(Math.min(width, height) / 18));
       const totalPixels = width * height;
       let totalBrightness = 0;
       for (let i = 0; i < totalPixels; i++) totalBrightness += grayscale[i];
       const meanBrightness = totalBrightness / totalPixels;
-      const adaptiveOffset = Math.max(5, Math.floor(meanBrightness * 0.06));
-      
-      console.log(`[OMR] Camera: ${width}x${height}, mean=${meanBrightness.toFixed(1)}, otsu=${globalThreshold}, offset=${adaptiveOffset}, block=${halfBlock}`);
+      // After background subtraction, the image is more uniform, so smaller offset suffices
+      const adaptiveOffset = Math.max(4, Math.floor(meanBrightness * 0.05));
+
+      console.log(`[OMR] Camera: mean=${meanBrightness.toFixed(1)}, otsu=${globalThreshold}, offset=${adaptiveOffset}, block=${halfBlock}`);
 
       for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
@@ -917,10 +1172,10 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         }
       }
     } else {
-      // Upload: original proven parameters — smaller block, fixed offset
-      const halfBlock = Math.max(8, Math.floor(Math.min(width, height) / 40));
-      
-      console.log(`[OMR] Upload: ${width}x${height}, otsu=${globalThreshold}, block=${halfBlock}`);
+      // Upload: tighter block, combine global+local threshold
+      const halfBlock = Math.max(8, Math.floor(Math.min(width, height) / 35));
+
+      console.log(`[OMR] Upload: otsu=${globalThreshold}, block=${halfBlock}`);
 
       for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
@@ -940,28 +1195,41 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       }
     }
 
-    // 4. Find corner alignment markers
+    // 5. Find corner alignment markers
     const markers = findCornerMarkers(binary, width, height, isCamera);
     console.log('[OMR] Corner markers found:', markers.found,
       'TL:', Math.round(markers.topLeft.x), Math.round(markers.topLeft.y),
       'BR:', Math.round(markers.bottomRight.x), Math.round(markers.bottomRight.y));
 
-    // 5. Fallback: use image bounds with small margin
-    const effectiveMarkers = markers.found
-      ? markers
-      : {
-          topLeft: { x: width * 0.02, y: height * 0.02 },
-          topRight: { x: width * 0.98, y: height * 0.02 },
-          bottomLeft: { x: width * 0.02, y: height * 0.98 },
-          bottomRight: { x: width * 0.98, y: height * 0.98 },
-        };
+    // 5b. If markers not found on first pass, retry with raw (un-normalized) grayscale
+    //     Some scans have markers that blend after background subtraction
+    let effectiveMarkers;
+    if (!markers.found) {
+      console.log('[OMR] Retrying marker detection on raw grayscale...');
+      const rawBinary = new Uint8Array(width * height);
+      const rawThreshold = calculateOtsuThreshold(rawGrayscale);
+      for (let i = 0; i < rawGrayscale.length; i++) {
+        rawBinary[i] = rawGrayscale[i] < rawThreshold ? 1 : 0;
+      }
+      const rawMarkers = findCornerMarkers(rawBinary, width, height, isCamera);
+      console.log('[OMR] Raw retry markers found:', rawMarkers.found);
+      effectiveMarkers = rawMarkers.found
+        ? rawMarkers
+        : {
+            topLeft: { x: width * 0.02, y: height * 0.02 },
+            topRight: { x: width * 0.98, y: height * 0.02 },
+            bottomLeft: { x: width * 0.02, y: height * 0.98 },
+            bottomRight: { x: width * 0.98, y: height * 0.98 },
+          };
+    } else {
+      effectiveMarkers = markers;
+    }
 
     // 6. Get template layout for this exam's question count
     const layout = getTemplateLayout(numQuestions);
 
     // 7. Detect student ID and answers
-    // Camera: use grayscale-relative darkness (handles uneven lighting)
-    // Upload: use binary thresholded image (proven to work for clean scans)
+    // Both camera and upload now benefit from background-subtracted grayscale
     const { studentId, doubleShadeColumns } = detectStudentIdFromImage(
       grayscale, binary, width, height, effectiveMarkers, layout, isCamera
     );
@@ -996,7 +1264,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
 
   // ─── BUBBLE SAMPLING ───
   
-  // Binary-based sampling (original — proven for uploaded/scanned images)
+  // Binary-based sampling with Gaussian weighting (center-weighted for accuracy)
   const sampleBubbleBinary = (
     binary: Uint8Array,
     imgW: number,
@@ -1006,10 +1274,13 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     radiusX: number,
     radiusY: number
   ): number => {
-    let filled = 0, total = 0;
+    let weightedFilled = 0, totalWeight = 0;
     const rx = radiusX * 0.75;
     const ry = radiusY * 0.75;
     const step = Math.max(1, Math.floor(Math.min(rx, ry) / 6));
+    // Gaussian sigma = half the radius for center-weighted sampling
+    const sigmaX = rx * 0.6;
+    const sigmaY = ry * 0.6;
 
     for (let dy = -Math.floor(ry); dy <= Math.floor(ry); dy += step) {
       for (let dx = -Math.floor(rx); dx <= Math.floor(rx); dx += step) {
@@ -1017,16 +1288,19 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         const px = Math.round(cx + dx);
         const py = Math.round(cy + dy);
         if (px >= 0 && px < imgW && py >= 0 && py < imgH) {
-          filled += binary[py * imgW + px];
-          total++;
+          // Gaussian weight: more weight to center pixels
+          const weight = Math.exp(-0.5 * ((dx * dx) / (sigmaX * sigmaX) + (dy * dy) / (sigmaY * sigmaY)));
+          weightedFilled += binary[py * imgW + px] * weight;
+          totalWeight += weight;
         }
       }
     }
-    return total > 0 ? filled / total : 0;
+    return totalWeight > 0 ? weightedFilled / totalWeight : 0;
   };
 
-  // Grayscale-relative sampling (for camera images — handles uneven lighting)
+  // Grayscale-relative sampling (handles uneven lighting)
   // Returns a "darkness" score: 0 = white/empty, 1 = fully dark/filled.
+  // Enhanced with Gaussian weighting and robust local contrast.
   const sampleBubbleGrayscale = (
     grayscale: Uint8Array,
     imgW: number,
@@ -1036,40 +1310,38 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     radiusX: number,
     radiusY: number
   ): number => {
-    let count = 0;
     const rx = radiusX * 0.70;
     const ry = radiusY * 0.70;
     const step = Math.max(1, Math.floor(Math.min(rx, ry) / 6));
+    const sigmaX = rx * 0.6;
+    const sigmaY = ry * 0.6;
 
-    // Collect pixel values within the ellipse
-    const pixelValues: number[] = [];
+    // Gaussian-weighted mean of inner bubble
+    let weightedSum = 0, totalWeight = 0;
     for (let dy = -Math.floor(ry); dy <= Math.floor(ry); dy += step) {
       for (let dx = -Math.floor(rx); dx <= Math.floor(rx); dx += step) {
         if (rx > 0 && ry > 0 && (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry) > 1) continue;
         const px = Math.round(cx + dx);
         const py = Math.round(cy + dy);
         if (px >= 0 && px < imgW && py >= 0 && py < imgH) {
-          pixelValues.push(grayscale[py * imgW + px]);
-          count++;
+          const w = Math.exp(-0.5 * ((dx * dx) / (sigmaX * sigmaX) + (dy * dy) / (sigmaY * sigmaY)));
+          weightedSum += grayscale[py * imgW + px] * w;
+          totalWeight += w;
         }
       }
     }
 
-    if (count === 0) return 0;
+    if (totalWeight === 0) return 0;
+    const mean = weightedSum / totalWeight;
 
-    // Compute the mean brightness of this bubble region
-    const mean = pixelValues.reduce((a, b) => a + b, 0) / count;
-    
-    // Also sample the surrounding area (ring around bubble) for local contrast reference
-    let surroundSum = 0;
-    let surroundCount = 0;
-    const outerRX = radiusX * 1.5;
-    const outerRY = radiusY * 1.5;
+    // Sample surrounding ring for local background reference
+    let surroundSum = 0, surroundCount = 0;
+    const outerRX = radiusX * 1.6;
+    const outerRY = radiusY * 1.6;
     const outerStep = Math.max(1, Math.floor(Math.min(outerRX, outerRY) / 4));
-    
+
     for (let dy = -Math.floor(outerRY); dy <= Math.floor(outerRY); dy += outerStep) {
       for (let dx = -Math.floor(outerRX); dx <= Math.floor(outerRX); dx += outerStep) {
-        // Only sample in the ring between inner and outer radius
         const normDist = (dx * dx) / (outerRX * outerRX) + (dy * dy) / (outerRY * outerRY);
         const innerNormDist = (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry);
         if (normDist > 1 || innerNormDist <= 1) continue;
@@ -1081,19 +1353,18 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         }
       }
     }
-    
-    // Local background brightness — if we got surrounding samples, use them
-    const localBg = surroundCount > 0 ? surroundSum / surroundCount : 220;
-    
+
+    // Robust local background: use surrounding ring, with a floor for very dark images
+    const localBg = surroundCount > 0
+      ? Math.max(surroundSum / surroundCount, 50)
+      : 220;
+
     // Darkness score: how much darker is this bubble compared to its surroundings
-    // A filled bubble will be significantly darker than the local background
-    if (localBg <= 0) return 0;
     const darkness = Math.max(0, (localBg - mean) / localBg);
-    
     return darkness;
   };
 
-  // ─── DETECT STUDENT ID ───
+  // ─── DETECT STUDENT ID (Enhanced with statistical adaptive thresholds) ───
   const detectStudentIdFromImage = (
     grayscale: Uint8Array,
     binary: Uint8Array,
@@ -1117,34 +1388,54 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     const bubbleRX = (layout.bubbleDiameterNX * frameW) / 2;
     const bubbleRY = (layout.bubbleDiameterNY * frameH) / 2;
 
-    // Use smaller radius for ID bubbles (they are 3.5mm vs 3.8mm for answers)
+    // Use smaller radius for ID bubbles (3.5mm vs 3.8mm for answers)
     const idBubbleRX = bubbleRX * (3.5 / 3.8);
     const idBubbleRY = bubbleRY * (3.5 / 3.8);
 
     console.log(`[ID] BubbleR: ${idBubbleRX.toFixed(1)}x${idBubbleRY.toFixed(1)}, mode=${isCamera ? 'camera' : 'upload'}`);
 
-    // Different thresholds for camera vs upload
-    const ID_FILL_THRESHOLD = isCamera ? 0.10 : 0.25;
-    const ID_DOUBLE_SHADE_RATIO = 0.55;
-
+    // Pass 1: Collect ALL fill values across all ID columns to compute statistics
+    const allIdFills: number[][] = [];
+    const allFillValues: number[] = [];
     for (let col = 0; col < 9; col++) {
-      let maxFill = 0;
-      let detectedDigit = 0;
-      let hasDetection = false;
-      const fills: number[] = [];
-
+      const colFills: number[] = [];
       for (let row = 0; row < 10; row++) {
         const nx = id.firstColNX + col * id.colSpacingNX;
         const ny = id.firstRowNY + row * id.rowSpacingNY;
         const { px, py } = mapToPixel(markers, nx, ny);
-
-        // Use the appropriate sampling method based on image source
         const fill = isCamera
           ? sampleBubbleGrayscale(grayscale, width, height, px, py, idBubbleRX, idBubbleRY)
           : sampleBubbleBinary(binary, width, height, px, py, idBubbleRX, idBubbleRY);
-        fills.push(fill);
-        if (fill > maxFill && fill > ID_FILL_THRESHOLD) {
-          maxFill = fill;
+        colFills.push(fill);
+        allFillValues.push(fill);
+      }
+      allIdFills.push(colFills);
+    }
+
+    // Compute statistics for adaptive threshold
+    allFillValues.sort((a, b) => a - b);
+    const median = allFillValues[Math.floor(allFillValues.length * 0.5)];
+    const q75 = allFillValues[Math.floor(allFillValues.length * 0.75)];
+    const q90 = allFillValues[Math.floor(allFillValues.length * 0.90)];
+
+    // Adaptive threshold: filled bubbles are statistical outliers
+    // Threshold = midpoint between typical (unfilled) and strong fills
+    const baseThreshold = isCamera ? 0.08 : 0.18;
+    const ID_FILL_THRESHOLD = Math.max(baseThreshold, median + (q90 - median) * 0.35);
+    const ID_DOUBLE_SHADE_RATIO = 0.50;
+
+    console.log(`[ID] Stats: median=${median.toFixed(3)}, q75=${q75.toFixed(3)}, q90=${q90.toFixed(3)}, adaptiveThreshold=${ID_FILL_THRESHOLD.toFixed(3)}`);
+
+    // Pass 2: Detect digits using adaptive threshold
+    for (let col = 0; col < 9; col++) {
+      const fills = allIdFills[col];
+      let maxFill = 0;
+      let detectedDigit = 0;
+      let hasDetection = false;
+
+      for (let row = 0; row < 10; row++) {
+        if (fills[row] > maxFill && fills[row] > ID_FILL_THRESHOLD) {
+          maxFill = fills[row];
           detectedDigit = row;
           hasDetection = true;
         }
@@ -1170,7 +1461,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     return { studentId: raw, doubleShadeColumns };
   };
 
-  // ─── DETECT ANSWERS ───
+  // ─── DETECT ANSWERS (Enhanced with statistical adaptive thresholds) ───
   const detectAnswersFromImage = (
     grayscale: Uint8Array,
     binary: Uint8Array,
@@ -1196,17 +1487,13 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     const bubbleRX = (layout.bubbleDiameterNX * frameW) / 2;
     const bubbleRY = (layout.bubbleDiameterNY * frameH) / 2;
 
-    // Different thresholds for camera vs upload
-    const FILL_THRESHOLD = isCamera ? 0.08 : 0.20;
-    const MULTI_ANSWER_RATIO = 0.45;
+    // Pass 1: Collect all fill values to compute statistics
+    const allQuestionFills: { q: number; fills: { choice: string; fill: number }[] }[] = [];
+    const allFillValues: number[] = [];
 
     for (const block of layout.answerBlocks) {
       for (let q = block.startQ; q <= block.endQ && q <= numQuestions; q++) {
-        const qIndex = q - 1;
         const rowInBlock = q - block.startQ;
-
-        let maxFill = 0;
-        let selectedChoice = '';
         const fills: { choice: string; fill: number }[] = [];
 
         for (let c = 0; c < choicesPerQuestion; c++) {
@@ -1214,41 +1501,70 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
           const ny = block.firstBubbleNY + rowInBlock * block.rowSpacingNY;
           const { px, py } = mapToPixel(markers, nx, ny);
 
-          // Use the appropriate sampling method based on image source
           const fill = isCamera
             ? sampleBubbleGrayscale(grayscale, width, height, px, py, bubbleRX, bubbleRY)
             : sampleBubbleBinary(binary, width, height, px, py, bubbleRX, bubbleRY);
           fills.push({ choice: choiceLabels[c], fill });
-          if (fill > maxFill && fill > FILL_THRESHOLD) {
-            maxFill = fill;
-            selectedChoice = choiceLabels[c];
-          }
+          allFillValues.push(fill);
         }
-
-        // Camera only: additional validation to reject noise from uneven lighting
-        if (isCamera && maxFill > FILL_THRESHOLD && fills.length > 1) {
-          const otherFills = fills.filter(f => f.choice !== selectedChoice).map(f => f.fill);
-          const avgOther = otherFills.reduce((a, b) => a + b, 0) / otherFills.length;
-          if (maxFill < avgOther * 2.0 && maxFill < 0.15) {
-            console.log(`[ANS] Q${q}: rejected weak detection ${selectedChoice}=${maxFill.toFixed(3)} (avgOther=${avgOther.toFixed(3)})`);
-            selectedChoice = '';
-            maxFill = 0;
-          }
-        }
-
-        // Check if multiple bubbles are filled for this question
-        if (maxFill > FILL_THRESHOLD) {
-          const filledBubbles = fills.filter(
-            f => f.fill > FILL_THRESHOLD && f.fill >= maxFill * MULTI_ANSWER_RATIO
-          );
-          if (filledBubbles.length > 1) {
-            multipleAnswers.push(q);
-            console.log(`[MULTI] Q${q}: ${filledBubbles.map(f => `${f.choice}=${f.fill.toFixed(3)}`).join(', ')} | all: ${fills.map(f => `${f.choice}=${f.fill.toFixed(3)}`).join(', ')}`);
-          }
-        }
-
-        answers[qIndex] = selectedChoice;
+        allQuestionFills.push({ q, fills });
       }
+    }
+
+    // Compute adaptive threshold from statistics
+    allFillValues.sort((a, b) => a - b);
+    const median = allFillValues[Math.floor(allFillValues.length * 0.5)];
+    const q75 = allFillValues[Math.floor(allFillValues.length * 0.75)];
+    const q90 = allFillValues[Math.floor(allFillValues.length * 0.90)];
+
+    // The threshold separates unfilled (noise) from filled bubbles
+    const baseThreshold = isCamera ? 0.06 : 0.15;
+    const FILL_THRESHOLD = Math.max(baseThreshold, median + (q90 - median) * 0.30);
+    const MULTI_ANSWER_RATIO = 0.40;
+
+    console.log(`[ANS] Stats: median=${median.toFixed(3)}, q75=${q75.toFixed(3)}, q90=${q90.toFixed(3)}, adaptiveThreshold=${FILL_THRESHOLD.toFixed(3)}`);
+
+    // Pass 2: Detect answers using adaptive threshold
+    for (const { q, fills } of allQuestionFills) {
+      const qIndex = q - 1;
+
+      let maxFill = 0;
+      let selectedChoice = '';
+
+      for (const { choice, fill } of fills) {
+        if (fill > maxFill && fill > FILL_THRESHOLD) {
+          maxFill = fill;
+          selectedChoice = choice;
+        }
+      }
+
+      // Noise rejection: verify the winner is significantly above the row average
+      if (maxFill > FILL_THRESHOLD && fills.length > 1) {
+        const otherFills = fills.filter(f => f.choice !== selectedChoice).map(f => f.fill);
+        const avgOther = otherFills.reduce((a, b) => a + b, 0) / otherFills.length;
+        const contrast = maxFill / Math.max(0.001, avgOther);
+
+        // For camera: require at least 1.8x contrast; for upload: 1.5x
+        const minContrast = isCamera ? 1.8 : 1.5;
+        if (contrast < minContrast && maxFill < FILL_THRESHOLD * 1.5) {
+          console.log(`[ANS] Q${q}: rejected weak detection ${selectedChoice}=${maxFill.toFixed(3)} (contrast=${contrast.toFixed(2)}, avgOther=${avgOther.toFixed(3)})`);
+          selectedChoice = '';
+          maxFill = 0;
+        }
+      }
+
+      // Check if multiple bubbles are filled for this question
+      if (maxFill > FILL_THRESHOLD) {
+        const filledBubbles = fills.filter(
+          f => f.fill > FILL_THRESHOLD && f.fill >= maxFill * MULTI_ANSWER_RATIO
+        );
+        if (filledBubbles.length > 1) {
+          multipleAnswers.push(q);
+          console.log(`[MULTI] Q${q}: ${filledBubbles.map(f => `${f.choice}=${f.fill.toFixed(3)}`).join(', ')} | all: ${fills.map(f => `${f.choice}=${f.fill.toFixed(3)}`).join(', ')}`);
+        }
+      }
+
+      answers[qIndex] = selectedChoice;
     }
     return { answers, multipleAnswers };
   };
