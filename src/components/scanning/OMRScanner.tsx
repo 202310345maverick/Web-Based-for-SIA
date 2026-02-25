@@ -720,32 +720,90 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       return { x: bestX, y: bestY, density: bestDensity, size: bestSize };
     };
 
-    // Phase 2: Centroid refinement — compute weighted center of dark pixels around initial detection
-    const refineMarkerCenter = (
+    // Phase 2: Flood-fill centroid — isolate each marker's connected dark blob
+    // This ONLY counts pixels belonging to the marker itself (not nearby text/bubbles)
+    // producing a rock-solid, deterministic center that doesn't shift between scans.
+    const refineMarkerCenterFloodFill = (
       cx: number, cy: number, markerSize: number
-    ): { x: number; y: number } => {
-      const radius = Math.floor(markerSize * 0.8);
-      let sumX = 0, sumY = 0, totalWeight = 0;
+    ): { x: number; y: number; area: number } => {
+      const seedX = Math.round(cx);
+      const seedY = Math.round(cy);
 
-      for (let dy = -radius; dy <= radius; dy++) {
-        for (let dx = -radius; dx <= radius; dx++) {
-          const px = Math.round(cx + dx);
-          const py = Math.round(cy + dy);
-          if (px >= 0 && px < width && py >= 0 && py < height) {
-            const weight = binary[py * width + px];
-            if (weight > 0) {
-              sumX += px * weight;
-              sumY += py * weight;
-              totalWeight += weight;
+      // Find a dark seed pixel at or near the approximate center
+      let startPx = seedX, startPy = seedY;
+      const hasSeed = seedX >= 0 && seedX < width && seedY >= 0 && seedY < height
+                      && binary[seedY * width + seedX] === 1;
+
+      if (!hasSeed) {
+        // Spiral outward to find the nearest dark pixel
+        let foundSeed = false;
+        for (let r = 1; r < markerSize * 1.5 && !foundSeed; r++) {
+          for (let dy = -r; dy <= r && !foundSeed; dy++) {
+            for (let dx = -r; dx <= r && !foundSeed; dx++) {
+              if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+              const px = seedX + dx, py = seedY + dy;
+              if (px >= 0 && px < width && py >= 0 && py < height && binary[py * width + px] === 1) {
+                startPx = px; startPy = py;
+                foundSeed = true;
+              }
             }
+          }
+        }
+        if (!foundSeed) return { x: cx, y: cy, area: 0 };
+      }
+
+      // BFS flood-fill from the seed — only follows connected dark pixels
+      const maxDist = Math.ceil(markerSize * 1.8); // stay within marker neighbourhood
+      const maxPixels = markerSize * markerSize * 6; // safety cap
+      const visited = new Uint8Array((2 * maxDist + 1) * (2 * maxDist + 1));
+      const vW = 2 * maxDist + 1;
+
+      const queue: number[] = [startPx, startPy]; // flat pairs [x,y,x,y,...]
+      let head = 0;
+      const localKey = (px: number, py: number) => (py - seedY + maxDist) * vW + (px - seedX + maxDist);
+      visited[localKey(startPx, startPy)] = 1;
+
+      let sumX = 0, sumY = 0, count = 0;
+      let minBX = startPx, maxBX = startPx, minBY = startPy, maxBY = startPy;
+
+      while (head < queue.length && count < maxPixels) {
+        const px = queue[head++];
+        const py = queue[head++];
+        sumX += px;
+        sumY += py;
+        count++;
+        if (px < minBX) minBX = px;
+        if (px > maxBX) maxBX = px;
+        if (py < minBY) minBY = py;
+        if (py > maxBY) maxBY = py;
+
+        // 4-connected neighbours
+        for (const [ddx, ddy] of [[1,0],[-1,0],[0,1],[0,-1]] as const) {
+          const nx = px + ddx, ny = py + ddy;
+          if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+          if (Math.abs(nx - seedX) > maxDist || Math.abs(ny - seedY) > maxDist) continue;
+          const key = localKey(nx, ny);
+          if (visited[key]) continue;
+          if (binary[ny * width + nx] === 1) {
+            visited[key] = 1;
+            queue.push(nx, ny);
           }
         }
       }
 
-      if (totalWeight > 0) {
-        return { x: sumX / totalWeight, y: sumY / totalWeight };
+      if (count > 0) {
+        // Validate the blob is roughly square — reject elongated features (text, lines)
+        const blobW = maxBX - minBX + 1;
+        const blobH = maxBY - minBY + 1;
+        const aspect = Math.min(blobW, blobH) / Math.max(blobW, blobH);
+        if (aspect < 0.4) {
+          // Too elongated to be a marker — use raw center
+          console.log(`[OMR] Rejected flood-fill blob: ${blobW}x${blobH}, aspect=${aspect.toFixed(2)}, not square enough`);
+          return { x: cx, y: cy, area: 0 };
+        }
+        return { x: sumX / count, y: sumY / count, area: count };
       }
-      return { x: cx, y: cy };
+      return { x: cx, y: cy, area: 0 };
     };
 
     const cW = Math.floor(width * searchFraction);
@@ -756,18 +814,18 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     const blRaw = findMarkerInRegion(0, height - cH, cW, height);
     const brRaw = findMarkerInRegion(width - cW, height - cH, width, height);
 
-    // Phase 2: Refine centers if density is sufficient
+    // Phase 2: Flood-fill refine — locks each marker to its own black blob's centroid
     const tl = tlRaw.density > minDensityThreshold
-      ? { ...refineMarkerCenter(tlRaw.x, tlRaw.y, tlRaw.size), density: tlRaw.density }
+      ? (() => { const r = refineMarkerCenterFloodFill(tlRaw.x, tlRaw.y, tlRaw.size); return { x: r.area > 0 ? r.x : tlRaw.x, y: r.area > 0 ? r.y : tlRaw.y, density: tlRaw.density }; })()
       : tlRaw;
     const tr = trRaw.density > minDensityThreshold
-      ? { ...refineMarkerCenter(trRaw.x, trRaw.y, trRaw.size), density: trRaw.density }
+      ? (() => { const r = refineMarkerCenterFloodFill(trRaw.x, trRaw.y, trRaw.size); return { x: r.area > 0 ? r.x : trRaw.x, y: r.area > 0 ? r.y : trRaw.y, density: trRaw.density }; })()
       : trRaw;
     const bl = blRaw.density > minDensityThreshold
-      ? { ...refineMarkerCenter(blRaw.x, blRaw.y, blRaw.size), density: blRaw.density }
+      ? (() => { const r = refineMarkerCenterFloodFill(blRaw.x, blRaw.y, blRaw.size); return { x: r.area > 0 ? r.x : blRaw.x, y: r.area > 0 ? r.y : blRaw.y, density: blRaw.density }; })()
       : blRaw;
     const br = brRaw.density > minDensityThreshold
-      ? { ...refineMarkerCenter(brRaw.x, brRaw.y, brRaw.size), density: brRaw.density }
+      ? (() => { const r = refineMarkerCenterFloodFill(brRaw.x, brRaw.y, brRaw.size); return { x: r.area > 0 ? r.x : brRaw.x, y: r.area > 0 ? r.y : brRaw.y, density: brRaw.density }; })()
       : brRaw;
 
     // Phase 3: Geometric validation
