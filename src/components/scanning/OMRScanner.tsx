@@ -683,32 +683,92 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     const searchFraction = isCamera ? 0.35 : 0.30;
     const minDensityThreshold = isCamera ? 0.25 : 0.35;
 
-    // Phase 1: Coarse scan with density-based detection
+    // Phase 1: Coarse scan — only accepts solid, square-shaped dark regions
+    // This filters out answer bubbles (round), text (elongated), and scattered dark pixels
     const findMarkerInRegion = (
       rx1: number, ry1: number, rx2: number, ry2: number
     ): { x: number; y: number; density: number; size: number } => {
       let bestX = (rx1 + rx2) / 2;
       let bestY = (ry1 + ry2) / 2;
+      let bestScore = 0;
       let bestDensity = 0;
       let bestSize = baseMarkerSize;
 
       for (const markerSize of markerSizes) {
-        const step = Math.max(1, Math.floor(markerSize / 5));
+        const step = Math.max(1, Math.floor(markerSize / 4));
+        const sampleStep = Math.max(1, Math.floor(markerSize / 8));
 
         for (let y = ry1; y <= ry2 - markerSize; y += step) {
           for (let x = rx1; x <= rx2 - markerSize; x += step) {
             let filled = 0;
             let total = 0;
-            for (let dy = 0; dy < markerSize; dy += 2) {
-              for (let dx = 0; dx < markerSize; dx += 2) {
+            // Also track per-quadrant fill to verify squareness
+            let q1 = 0, q2 = 0, q3 = 0, q4 = 0;
+            let qt1 = 0, qt2 = 0, qt3 = 0, qt4 = 0;
+            const halfM = markerSize / 2;
+
+            for (let dy = 0; dy < markerSize; dy += sampleStep) {
+              for (let dx = 0; dx < markerSize; dx += sampleStep) {
                 const px = Math.min(width - 1, x + dx);
                 const py = Math.min(height - 1, y + dy);
-                filled += binary[py * width + px];
+                const val = binary[py * width + px];
+                filled += val;
                 total++;
+                // Quadrant tracking
+                if (dx < halfM && dy < halfM) { q1 += val; qt1++; }
+                else if (dx >= halfM && dy < halfM) { q2 += val; qt2++; }
+                else if (dx < halfM && dy >= halfM) { q3 += val; qt3++; }
+                else { q4 += val; qt4++; }
               }
             }
-            const density = filled / total;
-            if (density > bestDensity) {
+
+            const density = total > 0 ? filled / total : 0;
+            if (density < minDensityThreshold) continue;
+
+            // ── SQUARENESS CHECK ──
+            // A solid filled square has all 4 quadrants roughly equally filled.
+            // Answer bubbles (round) or text will have uneven quadrant fill.
+            const qd1 = qt1 > 0 ? q1 / qt1 : 0;
+            const qd2 = qt2 > 0 ? q2 / qt2 : 0;
+            const qd3 = qt3 > 0 ? q3 / qt3 : 0;
+            const qd4 = qt4 > 0 ? q4 / qt4 : 0;
+            const qMin = Math.min(qd1, qd2, qd3, qd4);
+            const qMax = Math.max(qd1, qd2, qd3, qd4);
+            const uniformity = qMax > 0 ? qMin / qMax : 0;
+
+            // Require all quadrants to be at least 40% as filled as the densest one
+            if (uniformity < 0.40) continue;
+
+            // ── BORDER CHECK ──
+            // A solid square marker should also have filled pixels along all 4 edges.
+            // Bubbles have empty centers or hollow edges.
+            let topEdgeFill = 0, botEdgeFill = 0, leftEdgeFill = 0, rightEdgeFill = 0;
+            let edgeSamples = 0;
+            for (let d = 0; d < markerSize; d += sampleStep) {
+              // Top edge
+              const tx = Math.min(width - 1, x + d), ty = Math.min(height - 1, y);
+              topEdgeFill += binary[ty * width + tx];
+              // Bottom edge
+              const bx = Math.min(width - 1, x + d), by = Math.min(height - 1, y + markerSize - 1);
+              botEdgeFill += binary[by * width + bx];
+              // Left edge
+              const lx2 = Math.min(width - 1, x), ly = Math.min(height - 1, y + d);
+              leftEdgeFill += binary[ly * width + lx2];
+              // Right edge
+              const rx2 = Math.min(width - 1, x + markerSize - 1), ry = Math.min(height - 1, y + d);
+              rightEdgeFill += binary[ry * width + rx2];
+              edgeSamples++;
+            }
+            const edgeDensity = edgeSamples > 0
+              ? Math.min(topEdgeFill, botEdgeFill, leftEdgeFill, rightEdgeFill) / edgeSamples
+              : 0;
+            // All 4 edges should be at least 30% filled
+            if (edgeDensity < 0.30) continue;
+
+            // Score = density × uniformity — prefers solid, uniform squares
+            const score = density * uniformity;
+            if (score > bestScore) {
+              bestScore = score;
               bestDensity = density;
               bestX = x + markerSize / 2;
               bestY = y + markerSize / 2;
@@ -796,9 +856,15 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         const blobW = maxBX - minBX + 1;
         const blobH = maxBY - minBY + 1;
         const aspect = Math.min(blobW, blobH) / Math.max(blobW, blobH);
-        if (aspect < 0.4) {
-          // Too elongated to be a marker — use raw center
+        if (aspect < 0.55) {
           console.log(`[OMR] Rejected flood-fill blob: ${blobW}x${blobH}, aspect=${aspect.toFixed(2)}, not square enough`);
+          return { x: cx, y: cy, area: 0 };
+        }
+        // Bounding-box fill ratio: solid squares fill ~100% of bbox, circles ~78%
+        const bboxArea = blobW * blobH;
+        const fillRatio = count / bboxArea;
+        if (fillRatio < 0.65) {
+          console.log(`[OMR] Rejected flood-fill blob: fillRatio=${fillRatio.toFixed(2)}, too sparse for a solid marker`);
           return { x: cx, y: cy, area: 0 };
         }
         return { x: sumX / count, y: sumY / count, area: count };
