@@ -1,20 +1,28 @@
 // ─── Report Export Service ───
 // Provides Excel (.xlsx), CSV, and PDF export functionality
 // with institution branding, instructor info, and exam details.
+// Uses real Firestore data — no mock data.
 
 import jsPDF from 'jspdf';
 import * as XLSX from 'xlsx';
-import {
-  MockGrade,
-  getExamStatistics,
-  getMockGrades,
-  getMockExams,
-  getMockClasses,
-  getClassStatistics,
-  calculateLetterGrade,
-} from '@/services/mockGradeData';
 
 // ── Types ──
+
+export interface GradeRecord {
+  id: string;
+  studentId: string;
+  studentName: string;
+  examId: string;
+  examTitle: string;
+  classId: string;
+  className: string;
+  score: number;
+  totalQuestions: number;
+  percentage: number;
+  letterGrade: string;
+  status: string;
+  scannedAt: string;
+}
 
 export interface ExportOptions {
   title?: string;
@@ -24,17 +32,60 @@ export interface ExportOptions {
   includeStatistics?: boolean;
 }
 
+export interface ClassSummaryData {
+  className: string;
+  schedule: string;
+  section: string;
+  totalStudents: number;
+  totalExams: number;
+  overallAverage: number;
+  passRate: number;
+  exams: Array<{
+    title: string;
+    date: string;
+    totalStudents: number;
+    averagePercentage: number;
+    passRate: number;
+    highestPercentage: number;
+  }>;
+  topPerformers: Array<{ name: string; avg: number }>;
+  atRisk: Array<{ name: string; avg: number }>;
+}
+
+export interface StudentReportData {
+  studentId: string;
+  studentName: string;
+  grades: GradeRecord[];
+}
+
 interface TableColumn {
   header: string;
   key: string;
   width?: number;
-  align?: 'left' | 'center' | 'right';
 }
 
 // ── Helpers ──
 
+export function calculateLetterGrade(percentage: number): string {
+  if (percentage >= 97) return 'A+';
+  if (percentage >= 93) return 'A';
+  if (percentage >= 90) return 'A-';
+  if (percentage >= 87) return 'B+';
+  if (percentage >= 83) return 'B';
+  if (percentage >= 80) return 'B-';
+  if (percentage >= 77) return 'C+';
+  if (percentage >= 73) return 'C';
+  if (percentage >= 70) return 'C-';
+  if (percentage >= 67) return 'D+';
+  if (percentage >= 63) return 'D';
+  if (percentage >= 60) return 'D-';
+  return 'F';
+}
+
 function formatDate(dateStr: string): string {
+  if (!dateStr) return 'N/A';
   const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return dateStr;
   return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 }
 
@@ -45,26 +96,60 @@ function timestamp(): string {
   });
 }
 
+function sanitizeFilename(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_\- ]/g, '').replace(/\s+/g, '_');
+}
+
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function computeBasicStats(grades: GradeRecord[]) {
+  const percentages = grades.map(g => g.percentage);
+  const n = percentages.length;
+  if (n === 0) return { avg: 0, median: 0, highest: 0, lowest: 0, stdDev: 0, passRate: 0 };
+  const sorted = [...percentages].sort((a, b) => a - b);
+  const avg = Math.round(sorted.reduce((s, v) => s + v, 0) / n * 10) / 10;
+  const median = n % 2 === 0
+    ? Math.round((sorted[n / 2 - 1] + sorted[n / 2]) / 2 * 10) / 10
+    : sorted[Math.floor(n / 2)];
+  const variance = sorted.reduce((s, v) => s + (v - avg) ** 2, 0) / n;
+  const stdDev = Math.round(Math.sqrt(variance) * 10) / 10;
+  const passed = grades.filter(g => g.percentage >= 60).length;
+  return {
+    avg,
+    median,
+    highest: Math.max(...percentages),
+    lowest: Math.min(...percentages),
+    stdDev,
+    passRate: Math.round((passed / n) * 1000) / 10,
+  };
+}
+
 // ── CSV Export ──
 
 export function exportGradesToCSV(
-  grades: MockGrade[],
+  grades: GradeRecord[],
   options: ExportOptions = {},
 ): void {
   const title = options.title || 'Grade Report';
   const rows: string[] = [];
 
-  // Header metadata
   rows.push(`"${options.institutionName || 'Gordon College'}"`);
   rows.push(`"${title}"`);
   if (options.instructorName) rows.push(`"Instructor: ${options.instructorName}"`);
   if (options.includeTimestamp) rows.push(`"Generated: ${timestamp()}"`);
   rows.push('');
 
-  // Column headers
   rows.push('#,Student ID,Student Name,Exam,Score,Total,Percentage,Grade,Status,Date Scanned');
 
-  // Data rows
   grades.forEach((g, i) => {
     rows.push([
       i + 1,
@@ -76,21 +161,19 @@ export function exportGradesToCSV(
       `${g.percentage}%`,
       g.letterGrade,
       g.status,
-      g.scannedAt.split('T')[0],
+      g.scannedAt ? g.scannedAt.split('T')[0] : 'N/A',
     ].join(','));
   });
 
-  // Statistics footer
   if (options.includeStatistics && grades.length > 0) {
-    const avg = Math.round(grades.reduce((s, g) => s + g.percentage, 0) / grades.length * 10) / 10;
-    const pass = grades.filter(g => g.percentage >= 60).length;
+    const { avg, passRate, highest, lowest } = computeBasicStats(grades);
     rows.push('');
     rows.push(`"Summary Statistics"`);
     rows.push(`"Total Records",${grades.length}`);
     rows.push(`"Average Percentage",${avg}%`);
-    rows.push(`"Pass Rate",${Math.round((pass / grades.length) * 1000) / 10}%`);
-    rows.push(`"Highest",${Math.max(...grades.map(g => g.percentage))}%`);
-    rows.push(`"Lowest",${Math.min(...grades.map(g => g.percentage))}%`);
+    rows.push(`"Pass Rate",${passRate}%`);
+    rows.push(`"Highest",${highest}%`);
+    rows.push(`"Lowest",${lowest}%`);
   }
 
   const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8;' });
@@ -100,20 +183,20 @@ export function exportGradesToCSV(
 // ── Excel Export ──
 
 export function exportGradesToExcel(
-  grades: MockGrade[],
+  grades: GradeRecord[],
   options: ExportOptions = {},
 ): void {
   const title = options.title || 'Grade Report';
   const wb = XLSX.utils.book_new();
 
-  // ── Sheet 1: Grades ──
+  // Sheet 1: Grades
   const headerRows: (string | number)[][] = [
     [options.institutionName || 'Gordon College'],
     [title],
   ];
   if (options.instructorName) headerRows.push([`Instructor: ${options.instructorName}`]);
   if (options.includeTimestamp) headerRows.push([`Generated: ${timestamp()}`]);
-  headerRows.push([]); // blank row
+  headerRows.push([]);
 
   const columns = ['#', 'Student ID', 'Student Name', 'Exam', 'Score', 'Total', 'Percentage', 'Grade', 'Status', 'Date'];
   headerRows.push(columns);
@@ -128,22 +211,19 @@ export function exportGradesToExcel(
     g.percentage,
     g.letterGrade,
     g.status,
-    g.scannedAt.split('T')[0],
+    g.scannedAt ? g.scannedAt.split('T')[0] : 'N/A',
   ]);
 
   const wsData = [...headerRows, ...dataRows];
   const ws = XLSX.utils.aoa_to_sheet(wsData);
-
-  // Set column widths
   ws['!cols'] = [
     { wch: 5 }, { wch: 14 }, { wch: 25 }, { wch: 35 },
     { wch: 7 }, { wch: 7 }, { wch: 12 }, { wch: 7 },
     { wch: 10 }, { wch: 12 },
   ];
-
   XLSX.utils.book_append_sheet(wb, ws, 'Grades');
 
-  // ── Sheet 2: Statistics (if requested) ──
+  // Sheet 2: Statistics
   if (options.includeStatistics && grades.length > 0) {
     const examIds = [...new Set(grades.map(g => g.examId))];
     const statsRows: (string | number)[][] = [
@@ -153,22 +233,26 @@ export function exportGradesToExcel(
     ];
 
     for (const eid of examIds) {
-      const stats = getExamStatistics(eid);
-      if (stats) {
-        statsRows.push([
-          stats.examTitle, stats.className, stats.totalStudents,
-          stats.averagePercentage, stats.medianPercentage,
-          stats.highestPercentage, stats.lowestPercentage,
-          stats.stdDeviation, `${stats.passRate}%`,
-        ]);
-      }
+      const examGrades = grades.filter(g => g.examId === eid);
+      const { avg, median, highest, lowest, stdDev, passRate } = computeBasicStats(examGrades);
+      statsRows.push([
+        examGrades[0]?.examTitle || eid,
+        examGrades[0]?.className || '',
+        examGrades.length,
+        avg,
+        median,
+        highest,
+        lowest,
+        stdDev,
+        `${passRate}%`,
+      ]);
     }
 
     // Grade distribution
     statsRows.push([]);
     statsRows.push(['Grade Distribution']);
     statsRows.push(['Grade', 'Count', 'Percentage']);
-    const dist: Record<string, number> = { 'A': 0, 'B': 0, 'C': 0, 'D': 0, 'F': 0 };
+    const dist: Record<string, number> = { A: 0, B: 0, C: 0, D: 0, F: 0 };
     for (const g of grades) {
       const base = g.letterGrade[0];
       if (base in dist) dist[base]++;
@@ -193,7 +277,7 @@ export function exportGradesToExcel(
 // ── PDF Export ──
 
 export function exportGradesToPDF(
-  grades: MockGrade[],
+  grades: GradeRecord[],
   options: ExportOptions = {},
 ): void {
   const title = options.title || 'Grade Report';
@@ -204,29 +288,23 @@ export function exportGradesToPDF(
   let y = margin;
 
   function addHeader() {
-    // Institution header with green accent bar
-    doc.setFillColor(22, 101, 52); // green-800
+    doc.setFillColor(22, 101, 52);
     doc.rect(0, 0, pageW, 2, 'F');
-
     y = 12;
     doc.setFontSize(16);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(22, 101, 52);
     doc.text(options.institutionName || 'Gordon College', margin, y);
-
     y += 7;
     doc.setFontSize(12);
     doc.setTextColor(50, 50, 50);
     doc.text(title, margin, y);
-
-    // Right-aligned instructor & date
     doc.setFontSize(9);
     doc.setTextColor(100, 100, 100);
     if (options.instructorName) {
       doc.text(`Instructor: ${options.instructorName}`, pageW - margin, 12, { align: 'right' });
     }
     doc.text(`Generated: ${timestamp()}`, pageW - margin, 18, { align: 'right' });
-
     y += 4;
     doc.setDrawColor(200, 200, 200);
     doc.line(margin, y, pageW - margin, y);
@@ -240,30 +318,27 @@ export function exportGradesToPDF(
     doc.text('Confidential - For Academic Use Only', margin, pageH - 8);
   }
 
-  // Column layout for landscape A4
   const cols: TableColumn[] = [
-    { header: '#', key: 'num', width: 10, align: 'center' },
+    { header: '#', key: 'num', width: 10 },
     { header: 'Student ID', key: 'studentId', width: 28 },
     { header: 'Student Name', key: 'studentName', width: 50 },
     { header: 'Exam', key: 'examTitle', width: 65 },
-    { header: 'Score', key: 'score', width: 18, align: 'center' },
-    { header: 'Percentage', key: 'percentage', width: 24, align: 'center' },
-    { header: 'Grade', key: 'letterGrade', width: 16, align: 'center' },
-    { header: 'Status', key: 'status', width: 20, align: 'center' },
-    { header: 'Date', key: 'date', width: 26, align: 'center' },
+    { header: 'Score', key: 'score', width: 18 },
+    { header: 'Percentage', key: 'percentage', width: 24 },
+    { header: 'Grade', key: 'letterGrade', width: 16 },
+    { header: 'Status', key: 'status', width: 20 },
+    { header: 'Date', key: 'date', width: 26 },
   ];
 
   let pageNum = 1;
   addHeader();
 
-  // Table header
   function drawTableHeader() {
     doc.setFontSize(8);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(255, 255, 255);
     doc.setFillColor(22, 101, 52);
     doc.rect(margin, y - 4, pageW - margin * 2, 7, 'F');
-
     let x = margin + 2;
     for (const col of cols) {
       doc.text(col.header, x, y, { align: 'left' });
@@ -274,7 +349,6 @@ export function exportGradesToPDF(
 
   drawTableHeader();
 
-  // Data rows
   doc.setFont('helvetica', 'normal');
   for (let i = 0; i < grades.length; i++) {
     if (y > pageH - 20) {
@@ -290,16 +364,15 @@ export function exportGradesToPDF(
     const rowData: Record<string, string> = {
       num: String(i + 1),
       studentId: g.studentId,
-      studentName: g.studentName.length > 28 ? g.studentName.slice(0, 26) + '…' : g.studentName,
-      examTitle: g.examTitle.length > 35 ? g.examTitle.slice(0, 33) + '…' : g.examTitle,
+      studentName: g.studentName.length > 28 ? g.studentName.slice(0, 26) + '...' : g.studentName,
+      examTitle: g.examTitle.length > 35 ? g.examTitle.slice(0, 33) + '...' : g.examTitle,
       score: `${g.score}/${g.totalQuestions}`,
       percentage: `${g.percentage}%`,
       letterGrade: g.letterGrade,
       status: g.status,
-      date: g.scannedAt.split('T')[0],
+      date: g.scannedAt ? g.scannedAt.split('T')[0] : 'N/A',
     };
 
-    // Zebra striping
     if (i % 2 === 0) {
       doc.setFillColor(245, 245, 245);
       doc.rect(margin, y - 3.5, pageW - margin * 2, 5.5, 'F');
@@ -308,7 +381,6 @@ export function exportGradesToPDF(
     doc.setFontSize(7.5);
     doc.setTextColor(50, 50, 50);
 
-    // Color-code the grade
     let x = margin + 2;
     for (const col of cols) {
       const val = rowData[col.key] || '';
@@ -329,7 +401,6 @@ export function exportGradesToPDF(
     y += 5.5;
   }
 
-  // Statistics footer on last page
   if (options.includeStatistics && grades.length > 0) {
     if (y > pageH - 40) {
       addFooter(pageNum);
@@ -342,9 +413,7 @@ export function exportGradesToPDF(
     doc.line(margin, y, pageW - margin, y);
     y += 8;
 
-    const avg = Math.round(grades.reduce((s, g) => s + g.percentage, 0) / grades.length * 10) / 10;
-    const pass = grades.filter(g => g.percentage >= 60).length;
-    const passRate = Math.round((pass / grades.length) * 1000) / 10;
+    const { avg, passRate, highest, lowest } = computeBasicStats(grades);
 
     doc.setFontSize(10);
     doc.setFont('helvetica', 'bold');
@@ -360,8 +429,8 @@ export function exportGradesToPDF(
       ['Total Students:', String(grades.length)],
       ['Average:', `${avg}%`],
       ['Pass Rate:', `${passRate}%`],
-      ['Highest:', `${Math.max(...grades.map(g => g.percentage))}%`],
-      ['Lowest:', `${Math.min(...grades.map(g => g.percentage))}%`],
+      ['Highest:', `${highest}%`],
+      ['Lowest:', `${lowest}%`],
     ];
     for (const [label, val] of stats) {
       doc.setFont('helvetica', 'bold');
@@ -378,13 +447,7 @@ export function exportGradesToPDF(
 
 // ── Class Summary PDF (for printing) ──
 
-export function printClassSummary(classId: string, options: ExportOptions = {}): void {
-  const cls = getMockClasses().find(c => c.id === classId);
-  if (!cls) return;
-  const stats = getClassStatistics(classId);
-  if (!stats) return;
-  const exams = getMockExams(classId);
-
+export function printClassSummary(data: ClassSummaryData, options: ExportOptions = {}): void {
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   const pageW = doc.internal.pageSize.getWidth();
   const margin = 15;
@@ -403,12 +466,12 @@ export function printClassSummary(classId: string, options: ExportOptions = {}):
   y += 8;
   doc.setFontSize(14);
   doc.setTextColor(40, 40, 40);
-  doc.text(`Class Summary: ${cls.name}`, margin, y);
+  doc.text(`Class Summary: ${data.className}`, margin, y);
 
   y += 6;
   doc.setFontSize(9);
   doc.setTextColor(120, 120, 120);
-  doc.text(`Schedule: ${cls.schedule} | Section: ${cls.section}`, margin, y);
+  doc.text(`Section: ${data.section || 'N/A'} | Room: ${data.schedule || 'N/A'}`, margin, y);
   if (options.instructorName) {
     doc.text(`Instructor: ${options.instructorName}`, pageW - margin, y, { align: 'right' });
   }
@@ -421,10 +484,10 @@ export function printClassSummary(classId: string, options: ExportOptions = {}):
   doc.setFontSize(10);
   doc.setTextColor(60, 60, 60);
   const metrics = [
-    { label: 'Students', value: String(stats.totalStudents) },
-    { label: 'Exams', value: String(stats.totalExams) },
-    { label: 'Class Average', value: `${stats.overallAverage}%` },
-    { label: 'Pass Rate', value: `${stats.passRate}%` },
+    { label: 'Students', value: String(data.totalStudents) },
+    { label: 'Exams', value: String(data.totalExams) },
+    { label: 'Class Average', value: `${data.overallAverage}%` },
+    { label: 'Pass Rate', value: `${data.passRate}%` },
   ];
   const boxW = (pageW - margin * 2 - 15) / 4;
   metrics.forEach((m, i) => {
@@ -449,7 +512,6 @@ export function printClassSummary(classId: string, options: ExportOptions = {}):
   doc.text('Exam Breakdown', margin, y);
   y += 6;
 
-  // Table header
   doc.setFillColor(22, 101, 52);
   doc.rect(margin, y - 3.5, pageW - margin * 2, 7, 'F');
   doc.setTextColor(255, 255, 255);
@@ -467,27 +529,26 @@ export function printClassSummary(classId: string, options: ExportOptions = {}):
 
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(50, 50, 50);
-  for (let i = 0; i < exams.length; i++) {
-    const es = getExamStatistics(exams[i].id);
-    if (!es) continue;
+  for (let i = 0; i < data.exams.length; i++) {
+    const ex = data.exams[i];
     if (i % 2 === 0) {
       doc.setFillColor(248, 248, 248);
       doc.rect(margin, y - 3.5, pageW - margin * 2, 5.5, 'F');
     }
     doc.setFontSize(7.5);
-    const tTitle = es.examTitle.length > 38 ? es.examTitle.slice(0, 36) + '…' : es.examTitle;
+    const tTitle = ex.title.length > 38 ? ex.title.slice(0, 36) + '...' : ex.title;
     doc.text(tTitle, examCols[0].x, y);
-    doc.text(formatDate(es.date), examCols[1].x, y);
-    doc.text(String(es.totalStudents), examCols[2].x, y);
-    doc.text(`${es.averagePercentage}%`, examCols[3].x, y);
-    doc.text(`${es.passRate}%`, examCols[4].x, y);
-    doc.text(`${es.highestPercentage}%`, examCols[5].x, y);
+    doc.text(formatDate(ex.date), examCols[1].x, y);
+    doc.text(String(ex.totalStudents), examCols[2].x, y);
+    doc.text(`${ex.averagePercentage}%`, examCols[3].x, y);
+    doc.text(`${ex.passRate}%`, examCols[4].x, y);
+    doc.text(`${ex.highestPercentage}%`, examCols[5].x, y);
     y += 5.5;
   }
 
   // Top performers
   y += 8;
-  if (stats.topPerformers.length > 0) {
+  if (data.topPerformers.length > 0) {
     doc.setFontSize(11);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(22, 101, 52);
@@ -496,15 +557,15 @@ export function printClassSummary(classId: string, options: ExportOptions = {}):
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(9);
     doc.setTextColor(50, 50, 50);
-    for (const tp of stats.topPerformers) {
-      doc.text(`• ${tp.name}`, margin + 2, y);
+    for (const tp of data.topPerformers) {
+      doc.text(`- ${tp.name}`, margin + 2, y);
       doc.text(`${tp.avg}%`, margin + 80, y);
       y += 5;
     }
   }
 
-  // At Risk students
-  if (stats.atRisk.length > 0) {
+  // At-risk students
+  if (data.atRisk.length > 0) {
     y += 5;
     doc.setFontSize(11);
     doc.setFont('helvetica', 'bold');
@@ -514,8 +575,8 @@ export function printClassSummary(classId: string, options: ExportOptions = {}):
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(9);
     doc.setTextColor(50, 50, 50);
-    for (const ar of stats.atRisk) {
-      doc.text(`• ${ar.name}`, margin + 2, y);
+    for (const ar of data.atRisk) {
+      doc.text(`- ${ar.name}`, margin + 2, y);
       doc.text(`${ar.avg}%`, margin + 80, y);
       y += 5;
     }
@@ -528,25 +589,23 @@ export function printClassSummary(classId: string, options: ExportOptions = {}):
   doc.text('Confidential - For Academic Use Only', margin, ph - 8);
   doc.text(`Generated: ${timestamp()}`, pageW - margin, ph - 8, { align: 'right' });
 
-  doc.save(`${sanitizeFilename(cls.name)}_Summary.pdf`);
+  doc.save(`${sanitizeFilename(data.className)}_Summary.pdf`);
 }
 
 // ── Individual Student Report Card PDF ──
 
 export function printStudentReportCard(
-  studentId: string,
+  data: StudentReportData,
   options: ExportOptions = {},
 ): void {
-  const grades = getMockGrades({ studentId });
+  const { studentId, studentName, grades } = data;
   if (grades.length === 0) return;
 
-  const studentName = grades[0].studentName;
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   const pageW = doc.internal.pageSize.getWidth();
   const margin = 15;
   let y = margin;
 
-  // Accent bar
   doc.setFillColor(22, 101, 52);
   doc.rect(0, 0, pageW, 3, 'F');
 
@@ -604,7 +663,6 @@ export function printStudentReportCard(
   doc.text('Exam Results', margin, y);
   y += 6;
 
-  // Table header
   doc.setFillColor(22, 101, 52);
   doc.rect(margin, y - 3.5, pageW - margin * 2, 7, 'F');
   doc.setTextColor(255, 255, 255);
@@ -617,7 +675,7 @@ export function printStudentReportCard(
 
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(50, 50, 50);
-  const sorted = [...grades].sort((a, b) => a.scannedAt.localeCompare(b.scannedAt));
+  const sorted = [...grades].sort((a, b) => (a.scannedAt || '').localeCompare(b.scannedAt || ''));
   for (let i = 0; i < sorted.length; i++) {
     const g = sorted[i];
     if (i % 2 === 0) {
@@ -626,12 +684,11 @@ export function printStudentReportCard(
     }
     doc.setFontSize(8);
     doc.setTextColor(50, 50, 50);
-    const tTitle = g.examTitle.length > 36 ? g.examTitle.slice(0, 34) + '…' : g.examTitle;
+    const tTitle = g.examTitle.length > 36 ? g.examTitle.slice(0, 34) + '...' : g.examTitle;
     doc.text(tTitle, cX[0], y);
-    doc.text(g.className, cX[1], y);
+    doc.text(g.className || '', cX[1], y);
     doc.text(`${g.score}/${g.totalQuestions}`, cX[2], y);
     doc.text(`${g.percentage}%`, cX[3], y);
-    // Color-coded grade
     if (g.percentage >= 80) doc.setTextColor(22, 101, 52);
     else if (g.percentage >= 60) doc.setTextColor(180, 140, 0);
     else doc.setTextColor(200, 40, 40);
@@ -639,11 +696,11 @@ export function printStudentReportCard(
     doc.text(g.letterGrade, cX[4], y);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(50, 50, 50);
-    doc.text(g.scannedAt.split('T')[0], cX[5], y);
+    doc.text(g.scannedAt ? g.scannedAt.split('T')[0] : 'N/A', cX[5], y);
     y += 5.5;
   }
 
-  // Footer
+  // Footer with signature lines
   y += 10;
   doc.setDrawColor(200, 200, 200);
   doc.line(margin, y, pageW - margin, y);
@@ -669,21 +726,4 @@ export function printStudentReportCard(
   doc.text('Confidential - For Academic Use Only', margin, ph - 8);
 
   doc.save(`ReportCard_${sanitizeFilename(studentName)}.pdf`);
-}
-
-// ── Utilities ──
-
-function sanitizeFilename(name: string): string {
-  return name.replace(/[^a-zA-Z0-9_\- ]/g, '').replace(/\s+/g, '_');
-}
-
-function downloadBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -26,6 +26,7 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   Search,
+  Loader2,
 } from 'lucide-react';
 import {
   BarChart,
@@ -42,20 +43,15 @@ import {
   Area,
   AreaChart,
 } from 'recharts';
+import { useAuth } from '@/contexts/AuthContext';
+import { getClasses, Class } from '@/services/classService';
+import { getExams, Exam } from '@/services/examService';
+import { collection, query, where, getDocs, Timestamp } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 import {
-  getMockClasses,
-  getMockExams,
-  getMockGrades,
-  getOverallSummary,
-  getAllExamStatistics,
-  getScoreTrendData,
-  getExamStatistics,
-  getClassStatistics,
-  getGradeColor,
-  getStatusColor,
-  MockGrade,
-} from '@/services/mockGradeData';
-import {
+  GradeRecord,
+  ClassSummaryData,
+  calculateLetterGrade,
   exportGradesToCSV,
   exportGradesToExcel,
   exportGradesToPDF,
@@ -63,7 +59,7 @@ import {
   printStudentReportCard,
 } from '@/services/reportExportService';
 
-// ── Chart color constants ──
+// ── Chart colors ──
 const GRADE_COLORS: Record<string, string> = {
   A: '#166534',
   B: '#2563eb',
@@ -72,8 +68,139 @@ const GRADE_COLORS: Record<string, string> = {
   F: '#dc2626',
 };
 
+// ── Utility functions ──
+function getGradeColor(grade: string): string {
+  if (grade.startsWith('A')) return 'text-green-700 bg-green-100 border-green-200';
+  if (grade.startsWith('B')) return 'text-blue-700 bg-blue-100 border-blue-200';
+  if (grade.startsWith('C')) return 'text-yellow-700 bg-yellow-100 border-yellow-200';
+  if (grade.startsWith('D')) return 'text-orange-700 bg-orange-100 border-orange-200';
+  return 'text-red-700 bg-red-100 border-red-200';
+}
+
+function getStatusColor(status: string): string {
+  if (status === 'approved') return 'text-green-700 bg-green-50 border-green-200';
+  if (status === 'reviewed') return 'text-blue-700 bg-blue-50 border-blue-200';
+  return 'text-gray-700 bg-gray-50 border-gray-200';
+}
+
+function letterGrade(pct: number): string {
+  return calculateLetterGrade(pct);
+}
+
+// ── Statistics helpers ──
+interface ExamStatistics {
+  examId: string;
+  examTitle: string;
+  className: string;
+  date: string;
+  totalStudents: number;
+  averagePercentage: number;
+  medianPercentage: number;
+  highestPercentage: number;
+  lowestPercentage: number;
+  stdDeviation: number;
+  passRate: number;
+  failRate: number;
+  gradeDistribution: Record<string, number>;
+}
+
+function computeExamStatistics(
+  examGrades: GradeRecord[],
+  examTitle: string,
+  className: string,
+  date: string,
+  examId: string,
+): ExamStatistics {
+  const percentages = examGrades.map(g => g.percentage);
+  const n = percentages.length;
+  if (n === 0) {
+    return {
+      examId, examTitle, className, date,
+      totalStudents: 0, averagePercentage: 0, medianPercentage: 0,
+      highestPercentage: 0, lowestPercentage: 0, stdDeviation: 0,
+      passRate: 0, failRate: 0,
+      gradeDistribution: { A: 0, B: 0, C: 0, D: 0, F: 0 },
+    };
+  }
+  const sorted = [...percentages].sort((a, b) => a - b);
+  const avg = Math.round(sorted.reduce((s, v) => s + v, 0) / n * 10) / 10;
+  const median = n % 2 === 0
+    ? Math.round((sorted[n / 2 - 1] + sorted[n / 2]) / 2 * 10) / 10
+    : sorted[Math.floor(n / 2)];
+  const variance = sorted.reduce((s, v) => s + (v - avg) ** 2, 0) / n;
+  const stdDev = Math.round(Math.sqrt(variance) * 10) / 10;
+  const passed = examGrades.filter(g => g.percentage >= 60).length;
+
+  const dist: Record<string, number> = { A: 0, B: 0, C: 0, D: 0, F: 0 };
+  for (const g of examGrades) {
+    const base = g.letterGrade[0];
+    if (base in dist) dist[base]++;
+  }
+
+  return {
+    examId, examTitle, className, date,
+    totalStudents: n,
+    averagePercentage: avg,
+    medianPercentage: median,
+    highestPercentage: Math.max(...percentages),
+    lowestPercentage: Math.min(...percentages),
+    stdDeviation: stdDev,
+    passRate: Math.round((passed / n) * 1000) / 10,
+    failRate: Math.round(((n - passed) / n) * 1000) / 10,
+    gradeDistribution: dist,
+  };
+}
+
+function computeClassStats(classGrades: GradeRecord[]) {
+  if (classGrades.length === 0) return null;
+
+  const uniqueExams = new Set(classGrades.map(g => g.examId));
+  const studentMap = new Map<string, { name: string; grades: GradeRecord[] }>();
+  for (const g of classGrades) {
+    if (!studentMap.has(g.studentId)) studentMap.set(g.studentId, { name: g.studentName, grades: [] });
+    studentMap.get(g.studentId)!.grades.push(g);
+  }
+
+  const avg = Math.round(classGrades.reduce((s, g) => s + g.percentage, 0) / classGrades.length * 10) / 10;
+  const passed = classGrades.filter(g => g.percentage >= 60).length;
+  const passRate = Math.round((passed / classGrades.length) * 1000) / 10;
+
+  const studentAvgs = Array.from(studentMap.entries()).map(([, s]) => ({
+    name: s.name,
+    avg: Math.round(s.grades.reduce((sum, g) => sum + g.percentage, 0) / s.grades.length * 10) / 10,
+  }));
+  studentAvgs.sort((a, b) => b.avg - a.avg);
+
+  return {
+    totalStudents: studentMap.size,
+    totalExams: uniqueExams.size,
+    overallAverage: avg,
+    passRate,
+    topPerformers: studentAvgs.filter(s => s.avg >= 85).slice(0, 5),
+    atRisk: studentAvgs.filter(s => s.avg < 60).slice(0, 5),
+  };
+}
+
+// ── Firestore timestamp to ISO string ──
+function toISOString(val: unknown): string {
+  if (!val) return '';
+  if (typeof val === 'string') return val;
+  if (val instanceof Timestamp) return val.toDate().toISOString();
+  if (typeof val === 'object' && val !== null && 'toDate' in val) {
+    return (val as Timestamp).toDate().toISOString();
+  }
+  return new Date(val as string).toISOString();
+}
+
 // ── Main Component ──
 export default function Reports() {
+  const { user } = useAuth();
+  const [loading, setLoading] = useState(true);
+  const [classes, setClasses] = useState<Class[]>([]);
+  const [exams, setExams] = useState<Exam[]>([]);
+  const [grades, setGrades] = useState<GradeRecord[]>([]);
+
+  // UI state
   const [activeTab, setActiveTab] = useState('overview');
   const [selectedClassId, setSelectedClassId] = useState<string>('all');
   const [selectedExamId, setSelectedExamId] = useState<string>('');
@@ -82,45 +209,224 @@ export default function Reports() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [exportModalOpen, setExportModalOpen] = useState(false);
 
-  // ── Data ──
-  const classes = useMemo(() => getMockClasses(), []);
-  const allExams = useMemo(() => getMockExams(), []);
-  const summary = useMemo(() => getOverallSummary(), []);
-  const allExamStats = useMemo(() => getAllExamStatistics(), []);
-  const trendData = useMemo(() => getScoreTrendData(), []);
+  // ── Fetch data from Firestore ──
+  useEffect(() => {
+    async function fetchAll() {
+      if (!user?.id) return;
+      setLoading(true);
+      try {
+        const [userClasses, userExams] = await Promise.all([
+          getClasses(user.id),
+          getExams(user.id),
+        ]);
+        setClasses(userClasses);
+        setExams(userExams);
+
+        // Build student name lookup from embedded class data
+        const studentNameMap = new Map<string, string>();
+        for (const cls of userClasses) {
+          for (const s of cls.students || []) {
+            if (s.student_id) {
+              studentNameMap.set(s.student_id, `${s.last_name}, ${s.first_name}`);
+            }
+          }
+        }
+
+        // Map exam → class
+        const examClassMap = new Map<string, { classId: string; className: string }>();
+        for (const exam of userExams) {
+          const cls = userClasses.find(
+            c => c.class_name === exam.className || (exam as any).classId === c.id
+          );
+          if (cls) {
+            examClassMap.set(exam.id, { classId: cls.id, className: cls.class_name });
+          }
+        }
+
+        const allGrades: GradeRecord[] = [];
+        const processedKeys = new Set<string>();
+
+        // 1) Fetch from scannedResults (batches of 10 for Firestore 'in' limit)
+        const allExamIds = userExams.map(e => e.id);
+        for (let i = 0; i < allExamIds.length; i += 10) {
+          const batch = allExamIds.slice(i, i + 10);
+          try {
+            const q = query(collection(db, 'scannedResults'), where('examId', 'in', batch));
+            const snap = await getDocs(q);
+            snap.forEach(docSnap => {
+              const data = docSnap.data();
+              if (data.isNullId) return;
+              const key = `${data.studentId}_${data.examId}`;
+              if (processedKeys.has(key)) return;
+              processedKeys.add(key);
+
+              const exam = userExams.find(e => e.id === data.examId);
+              const classInfo = examClassMap.get(data.examId);
+              const percentage = data.totalQuestions > 0
+                ? Math.round((data.score / data.totalQuestions) * 100)
+                : 0;
+
+              allGrades.push({
+                id: docSnap.id,
+                studentId: data.studentId,
+                studentName: studentNameMap.get(data.studentId) || data.studentId,
+                examId: data.examId,
+                examTitle: exam?.title || data.examId,
+                classId: classInfo?.classId || '',
+                className: classInfo?.className || '',
+                score: data.score || 0,
+                totalQuestions: data.totalQuestions || 0,
+                percentage,
+                letterGrade: calculateLetterGrade(percentage),
+                status: 'submitted',
+                scannedAt: toISOString(data.scannedAt),
+              });
+            });
+          } catch (err) {
+            console.error('Error fetching scannedResults batch:', err);
+          }
+        }
+
+        // 2) Fetch from studentGrades per class
+        for (const cls of userClasses) {
+          try {
+            const q = query(collection(db, 'studentGrades'), where('class_id', '==', cls.id));
+            const snap = await getDocs(q);
+            snap.forEach(docSnap => {
+              const data = docSnap.data();
+              const key = `${data.student_id}_${data.exam_id}`;
+              if (processedKeys.has(key)) return;
+              processedKeys.add(key);
+
+              const exam = userExams.find(e => e.id === data.exam_id);
+              const percentage = data.percentage ||
+                (data.max_score > 0 ? Math.round((data.score / data.max_score) * 100) : 0);
+
+              allGrades.push({
+                id: docSnap.id,
+                studentId: data.student_id,
+                studentName: studentNameMap.get(data.student_id) || data.student_id,
+                examId: data.exam_id,
+                examTitle: exam?.title || data.exam_id || 'Unknown Exam',
+                classId: cls.id,
+                className: cls.class_name,
+                score: data.score || 0,
+                totalQuestions: data.max_score || 0,
+                percentage,
+                letterGrade: data.letter_grade || calculateLetterGrade(percentage),
+                status: data.status || 'submitted',
+                scannedAt: toISOString(data.graded_at),
+              });
+            });
+          } catch (err) {
+            console.error('Error fetching grades for class:', cls.id, err);
+          }
+        }
+
+        setGrades(allGrades);
+      } catch (error) {
+        console.error('Error fetching report data:', error);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchAll();
+  }, [user?.id]);
+
+  // ── Computed data ──
 
   const filteredExams = useMemo(() => {
-    if (selectedClassId === 'all') return allExams;
-    return allExams.filter(e => e.classId === selectedClassId);
-  }, [selectedClassId, allExams]);
-
-  const currentExamStats = useMemo(() => {
-    if (!selectedExamId) return null;
-    return getExamStatistics(selectedExamId);
-  }, [selectedExamId]);
+    if (selectedClassId === 'all') return exams;
+    const cls = classes.find(c => c.id === selectedClassId);
+    if (!cls) return exams;
+    return exams.filter(
+      e => e.className === cls.class_name || (e as any).classId === cls.id
+    );
+  }, [selectedClassId, exams, classes]);
 
   const filteredGrades = useMemo(() => {
-    let grades = getMockGrades({
-      classId: selectedClassId === 'all' ? undefined : selectedClassId,
-      examId: selectedExamId || undefined,
-    });
+    let result = [...grades];
+    if (selectedClassId !== 'all') {
+      result = result.filter(g => g.classId === selectedClassId);
+    }
+    if (selectedExamId) {
+      result = result.filter(g => g.examId === selectedExamId);
+    }
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      grades = grades.filter(
+      result = result.filter(
         g => g.studentName.toLowerCase().includes(q) || g.studentId.includes(q)
       );
     }
-    grades.sort((a, b) => {
+    result.sort((a, b) => {
       let cmp = 0;
       if (sortField === 'name') cmp = a.studentName.localeCompare(b.studentName);
       else if (sortField === 'percentage') cmp = a.percentage - b.percentage;
-      else cmp = a.scannedAt.localeCompare(b.scannedAt);
+      else cmp = (a.scannedAt || '').localeCompare(b.scannedAt || '');
       return sortDir === 'asc' ? cmp : -cmp;
     });
-    return grades;
-  }, [selectedClassId, selectedExamId, searchQuery, sortField, sortDir]);
+    return result;
+  }, [grades, selectedClassId, selectedExamId, searchQuery, sortField, sortDir]);
 
-  // ── Grade distribution for charts ──
+  const summary = useMemo(() => {
+    const uniqueExams = new Set(grades.map(g => g.examId));
+    const uniqueStudents = new Set(grades.map(g => g.studentId));
+    const uniqueClasses = new Set(grades.map(g => g.classId).filter(Boolean));
+    const avg = grades.length > 0
+      ? Math.round(grades.reduce((s, g) => s + g.percentage, 0) / grades.length * 10) / 10
+      : 0;
+    const passed = grades.filter(g => g.percentage >= 60).length;
+    const passRate = grades.length > 0 ? Math.round((passed / grades.length) * 1000) / 10 : 0;
+
+    const now = new Date();
+    const thisMonth = grades.filter(g => {
+      const d = new Date(g.scannedAt);
+      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+    });
+    const examsThisMonth = new Set(thisMonth.map(g => g.examId)).size;
+
+    return {
+      totalExams: uniqueExams.size,
+      totalStudents: uniqueStudents.size,
+      totalClasses: uniqueClasses.size,
+      overallAverage: avg,
+      passRate,
+      totalGrades: grades.length,
+      examsThisMonth,
+    };
+  }, [grades]);
+
+  const allExamStats = useMemo(() => {
+    const examIds = [...new Set(grades.map(g => g.examId))];
+    return examIds.map(eid => {
+      const examGrades = grades.filter(g => g.examId === eid);
+      const exam = exams.find(e => e.id === eid);
+      return computeExamStatistics(
+        examGrades,
+        exam?.title || eid,
+        examGrades[0]?.className || '',
+        exam?.created_at || examGrades[0]?.scannedAt || '',
+        eid,
+      );
+    }).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  }, [grades, exams]);
+
+  const trendData = useMemo(() => {
+    return [...allExamStats]
+      .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
+      .map(es => ({
+        exam: es.examTitle.length > 20 ? es.examTitle.slice(0, 18) + '...' : es.examTitle,
+        className: es.className,
+        average: es.averagePercentage,
+      }));
+  }, [allExamStats]);
+
+  const currentExamStats = useMemo(() => {
+    if (!selectedExamId) return null;
+    return allExamStats.find(es => es.examId === selectedExamId) || null;
+  }, [selectedExamId, allExamStats]);
+
   const gradeDistribution = useMemo(() => {
     const dist: Record<string, number> = { A: 0, B: 0, C: 0, D: 0, F: 0 };
     for (const g of filteredGrades) {
@@ -151,14 +457,17 @@ export default function Reports() {
   }, [filteredGrades]);
 
   // ── Callbacks ──
+
+  const instructorName = user?.displayName || 'Instructor';
+
   const handleExport = useCallback((format: 'csv' | 'excel' | 'pdf') => {
     const options = {
       title: selectedExamId
         ? `${currentExamStats?.examTitle || 'Exam'} Results`
         : selectedClassId !== 'all'
-          ? `${classes.find(c => c.id === selectedClassId)?.name || 'Class'} Grades`
+          ? `${classes.find(c => c.id === selectedClassId)?.class_name || 'Class'} Grades`
           : 'All Grades Report',
-      instructorName: 'Dr. Maria Santos',
+      instructorName,
       institutionName: 'Gordon College',
       includeTimestamp: true,
       includeStatistics: true,
@@ -168,26 +477,107 @@ export default function Reports() {
     else if (format === 'excel') exportGradesToExcel(filteredGrades, options);
     else exportGradesToPDF(filteredGrades, options);
     setExportModalOpen(false);
-  }, [filteredGrades, selectedExamId, selectedClassId, currentExamStats, classes]);
+  }, [filteredGrades, selectedExamId, selectedClassId, currentExamStats, classes, instructorName]);
 
   const handlePrintClassSummary = useCallback((classId: string) => {
-    printClassSummary(classId, {
-      instructorName: 'Dr. Maria Santos',
+    const cls = classes.find(c => c.id === classId);
+    if (!cls) return;
+
+    const classGrades = grades.filter(g => g.classId === classId);
+    const stats = computeClassStats(classGrades);
+    if (!stats) return;
+
+    const classExams = exams.filter(
+      e => e.className === cls.class_name || (e as any).classId === cls.id
+    );
+    const examSummaries = classExams.map(exam => {
+      const examGrades = classGrades.filter(g => g.examId === exam.id);
+      const percentages = examGrades.map(g => g.percentage);
+      const avg = percentages.length > 0
+        ? Math.round(percentages.reduce((s, v) => s + v, 0) / percentages.length * 10) / 10
+        : 0;
+      const passed = examGrades.filter(g => g.percentage >= 60).length;
+      return {
+        title: exam.title,
+        date: exam.created_at || '',
+        totalStudents: examGrades.length,
+        averagePercentage: avg,
+        passRate: percentages.length > 0 ? Math.round((passed / percentages.length) * 1000) / 10 : 0,
+        highestPercentage: percentages.length > 0 ? Math.max(...percentages) : 0,
+      };
+    });
+
+    const summaryData: ClassSummaryData = {
+      className: cls.class_name,
+      schedule: cls.room || '',
+      section: cls.section_block || '',
+      totalStudents: stats.totalStudents,
+      totalExams: stats.totalExams,
+      overallAverage: stats.overallAverage,
+      passRate: stats.passRate,
+      exams: examSummaries,
+      topPerformers: stats.topPerformers,
+      atRisk: stats.atRisk,
+    };
+
+    printClassSummary(summaryData, {
+      instructorName,
       institutionName: 'Gordon College',
     });
-  }, []);
+  }, [classes, grades, exams, instructorName]);
 
   const handlePrintStudentCard = useCallback((studentId: string) => {
-    printStudentReportCard(studentId, {
-      instructorName: 'Dr. Maria Santos',
+    const studentGrades = grades.filter(g => g.studentId === studentId);
+    if (studentGrades.length === 0) return;
+
+    printStudentReportCard({
+      studentId,
+      studentName: studentGrades[0].studentName,
+      grades: studentGrades,
+    }, {
+      instructorName,
       institutionName: 'Gordon College',
     });
-  }, []);
+  }, [grades, instructorName]);
 
   const toggleSort = useCallback((field: 'name' | 'percentage' | 'date') => {
     if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
     else { setSortField(field); setSortDir('asc'); }
   }, [sortField]);
+
+  // ── Loading state ──
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
+        <Loader2 className="w-10 h-10 animate-spin text-green-700" />
+        <p className="text-muted-foreground text-sm">Loading report data...</p>
+      </div>
+    );
+  }
+
+  // ── Empty state ──
+  if (grades.length === 0 && !loading) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold text-foreground">Reports & Analytics</h1>
+          <p className="text-muted-foreground mt-1">
+            Comprehensive performance analytics, grade visualization, and export tools.
+          </p>
+        </div>
+        <Card className="border-dashed">
+          <CardContent className="py-16 text-center">
+            <BarChart3 className="w-16 h-16 mx-auto mb-4 text-muted-foreground opacity-40" />
+            <h2 className="text-xl font-semibold text-muted-foreground mb-2">No Data Yet</h2>
+            <p className="text-sm text-muted-foreground max-w-md mx-auto">
+              There are no scanned results or graded exams to display. Start by creating classes,
+              adding students, creating exams, and scanning answer sheets.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   // ── Render ──
   return (
@@ -208,7 +598,7 @@ export default function Reports() {
             <SelectContent>
               <SelectItem value="all">All Classes</SelectItem>
               {classes.map(c => (
-                <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                <SelectItem key={c.id} value={c.id}>{c.class_name}</SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -422,7 +812,6 @@ export default function Reports() {
 
           {/* Score Range + Pie Row */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Score Range Histogram */}
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-base font-semibold">Score Range Distribution</CardTitle>
@@ -442,7 +831,6 @@ export default function Reports() {
               </CardContent>
             </Card>
 
-            {/* Pass/Fail Pie */}
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-base font-semibold">Pass / Fail Ratio</CardTitle>
@@ -509,9 +897,16 @@ export default function Reports() {
                             {es.passRate}%
                           </Badge>
                         </td>
-                        <td className="py-2 px-3 text-center text-muted-foreground">{es.date}</td>
+                        <td className="py-2 px-3 text-center text-muted-foreground">
+                          {es.date ? new Date(es.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A'}
+                        </td>
                       </tr>
                     ))}
+                    {allExamStats.length === 0 && (
+                      <tr>
+                        <td colSpan={8} className="py-8 text-center text-muted-foreground">No exam data available.</td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -521,7 +916,6 @@ export default function Reports() {
 
         {/* ═══════ EXAM RESULTS TAB ═══════ */}
         <TabsContent value="exams" className="space-y-6 mt-4">
-          {/* Exam Selector */}
           <div className="flex flex-wrap gap-3 items-center">
             <Select value={selectedExamId} onValueChange={setSelectedExamId}>
               <SelectTrigger className="w-[320px]">
@@ -530,7 +924,7 @@ export default function Reports() {
               <SelectContent>
                 {filteredExams.map(e => (
                   <SelectItem key={e.id} value={e.id}>
-                    {e.title} ({e.className})
+                    {e.title} ({e.className || 'No class'})
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -542,7 +936,6 @@ export default function Reports() {
             )}
           </div>
 
-          {/* Exam Stats Cards */}
           {currentExamStats && (
             <>
               <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
@@ -562,7 +955,6 @@ export default function Reports() {
                 ))}
               </div>
 
-              {/* Grade distribution for selected exam */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <Card>
                   <CardHeader className="pb-2">
@@ -592,7 +984,6 @@ export default function Reports() {
                   </CardContent>
                 </Card>
 
-                {/* Exam details */}
                 <Card>
                   <CardHeader className="pb-2">
                     <CardTitle className="text-base">Exam Details</CardTitle>
@@ -608,8 +999,12 @@ export default function Reports() {
                         <p className="font-semibold">{currentExamStats.className}</p>
                       </div>
                       <div className="p-3 bg-muted/30 rounded-lg">
-                        <p className="text-muted-foreground">Date Administered</p>
-                        <p className="font-semibold">{currentExamStats.date}</p>
+                        <p className="text-muted-foreground">Date</p>
+                        <p className="font-semibold">
+                          {currentExamStats.date
+                            ? new Date(currentExamStats.date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+                            : 'N/A'}
+                        </p>
                       </div>
                       <div className="p-3 bg-muted/30 rounded-lg">
                         <p className="text-muted-foreground">Std Deviation</p>
@@ -643,7 +1038,6 @@ export default function Reports() {
 
         {/* ═══════ STUDENT GRADES TAB ═══════ */}
         <TabsContent value="students" className="space-y-4 mt-4">
-          {/* Filters */}
           <div className="flex flex-wrap gap-3 items-center">
             <div className="relative flex-1 min-w-[200px] max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -671,7 +1065,6 @@ export default function Reports() {
             </Badge>
           </div>
 
-          {/* Grades Table */}
           <Card>
             <CardContent className="p-0">
               <div className="overflow-x-auto">
@@ -705,7 +1098,7 @@ export default function Reports() {
                         <td className="py-2 px-4 text-muted-foreground">{i + 1}</td>
                         <td className="py-2 px-3 font-medium">{g.studentName}</td>
                         <td className="py-2 px-3 text-muted-foreground font-mono text-xs">{g.studentId}</td>
-                        <td className="py-2 px-3 text-muted-foreground">{g.examTitle.length > 30 ? g.examTitle.slice(0, 28) + '…' : g.examTitle}</td>
+                        <td className="py-2 px-3 text-muted-foreground">{g.examTitle.length > 30 ? g.examTitle.slice(0, 28) + '...' : g.examTitle}</td>
                         <td className="py-2 px-3 text-center">{g.score}/{g.totalQuestions}</td>
                         <td className="py-2 px-3 text-center font-medium">{g.percentage}%</td>
                         <td className="py-2 px-3 text-center">
@@ -718,7 +1111,9 @@ export default function Reports() {
                             {g.status}
                           </Badge>
                         </td>
-                        <td className="py-2 px-3 text-center text-muted-foreground text-xs">{g.scannedAt.split('T')[0]}</td>
+                        <td className="py-2 px-3 text-center text-muted-foreground text-xs">
+                          {g.scannedAt ? g.scannedAt.split('T')[0] : 'N/A'}
+                        </td>
                         <td className="py-2 px-3 text-center">
                           <Button
                             variant="ghost"
@@ -766,16 +1161,17 @@ export default function Reports() {
               </p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {classes.map(cls => {
-                  const stats = getClassStatistics(cls.id);
+                  const classGrades = grades.filter(g => g.classId === cls.id);
+                  const stats = computeClassStats(classGrades);
                   return (
                     <div key={cls.id} className="border rounded-lg p-4 hover:border-green-300 transition-colors">
                       <div className="flex items-start justify-between">
                         <div>
-                          <h4 className="font-semibold">{cls.name}</h4>
-                          <p className="text-xs text-muted-foreground">{cls.schedule}</p>
+                          <h4 className="font-semibold">{cls.class_name}</h4>
+                          <p className="text-xs text-muted-foreground">{cls.section_block || cls.room || 'No section'}</p>
                           <div className="flex items-center gap-3 mt-2 text-xs">
                             <span className="flex items-center gap-1">
-                              <Users className="w-3 h-3" /> {cls.studentCount} students
+                              <Users className="w-3 h-3" /> {cls.students?.length || 0} students
                             </span>
                             {stats && (
                               <>
@@ -789,17 +1185,17 @@ export default function Reports() {
                           variant="outline"
                           size="sm"
                           onClick={() => handlePrintClassSummary(cls.id)}
+                          disabled={classGrades.length === 0}
                         >
                           <Printer className="w-3.5 h-3.5 mr-1" />
                           Print
                         </Button>
                       </div>
                       {/* Mini grade distribution bar */}
-                      {stats && (
+                      {classGrades.length > 0 && (
                         <div className="mt-3 flex gap-0.5 h-2 rounded-full overflow-hidden">
                           {(() => {
                             const dist: Record<string, number> = { A: 0, B: 0, C: 0, D: 0, F: 0 };
-                            const classGrades = getMockGrades({ classId: cls.id });
                             for (const g of classGrades) { const b = g.letterGrade[0]; if (b in dist) dist[b]++; }
                             const total = classGrades.length || 1;
                             return Object.entries(dist).map(([grade, count]) => (
@@ -813,9 +1209,18 @@ export default function Reports() {
                           })()}
                         </div>
                       )}
+                      {classGrades.length === 0 && (
+                        <p className="mt-2 text-xs text-muted-foreground italic">No grades recorded yet</p>
+                      )}
                     </div>
                   );
                 })}
+                {classes.length === 0 && (
+                  <div className="col-span-2 py-8 text-center text-muted-foreground">
+                    <Users className="w-10 h-10 mx-auto mb-2 opacity-40" />
+                    <p>No classes found. Create a class to get started.</p>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -833,7 +1238,6 @@ export default function Reports() {
                 Generate individual student report cards with all exam scores, overall average, and instructor signature lines.
               </p>
 
-              {/* Class selector for individual cards */}
               <div className="flex items-center gap-3 mb-4">
                 <Select value={selectedClassId} onValueChange={(v) => { setSelectedClassId(v); }}>
                   <SelectTrigger className="w-[200px]">
@@ -841,7 +1245,7 @@ export default function Reports() {
                   </SelectTrigger>
                   <SelectContent>
                     {classes.map(c => (
-                      <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                      <SelectItem key={c.id} value={c.id}>{c.class_name}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -857,12 +1261,11 @@ export default function Reports() {
                 </div>
               </div>
 
-              {/* Student list */}
               {selectedClassId !== 'all' && (
                 <div className="space-y-2 max-h-[400px] overflow-y-auto">
                   {(() => {
-                    const classGrades = getMockGrades({ classId: selectedClassId });
-                    const studentMap = new Map<string, { name: string; grades: MockGrade[] }>();
+                    const classGrades = grades.filter(g => g.classId === selectedClassId);
+                    const studentMap = new Map<string, { name: string; grades: GradeRecord[] }>();
                     for (const g of classGrades) {
                       if (!studentMap.has(g.studentId)) studentMap.set(g.studentId, { name: g.studentName, grades: [] });
                       studentMap.get(g.studentId)!.grades.push(g);
@@ -872,6 +1275,14 @@ export default function Reports() {
                       const q = searchQuery.toLowerCase();
                       studentEntries = studentEntries.filter(([id, s]) =>
                         s.name.toLowerCase().includes(q) || id.includes(q)
+                      );
+                    }
+                    if (studentEntries.length === 0) {
+                      return (
+                        <div className="py-8 text-center text-muted-foreground">
+                          <Search className="w-10 h-10 mx-auto mb-2 opacity-40" />
+                          <p>No students with grades found in this class.</p>
+                        </div>
                       );
                     }
                     return studentEntries.slice(0, 50).map(([studentId, student]) => {
@@ -948,18 +1359,4 @@ export default function Reports() {
       )}
     </div>
   );
-}
-
-// Simple letter grade helper
-function letterGrade(pct: number): string {
-  if (pct >= 93) return 'A';
-  if (pct >= 90) return 'A-';
-  if (pct >= 87) return 'B+';
-  if (pct >= 83) return 'B';
-  if (pct >= 80) return 'B-';
-  if (pct >= 77) return 'C+';
-  if (pct >= 73) return 'C';
-  if (pct >= 70) return 'C-';
-  if (pct >= 60) return 'D';
-  return 'F';
 }
