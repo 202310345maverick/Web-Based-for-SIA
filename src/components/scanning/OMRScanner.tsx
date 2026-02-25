@@ -1494,40 +1494,6 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   };
 
   // ─── BUBBLE SAMPLING ───
-  
-  // Binary-based sampling with Gaussian weighting (center-weighted for accuracy)
-  const sampleBubbleBinary = (
-    binary: Uint8Array,
-    imgW: number,
-    imgH: number,
-    cx: number,
-    cy: number,
-    radiusX: number,
-    radiusY: number
-  ): number => {
-    let weightedFilled = 0, totalWeight = 0;
-    const rx = radiusX * 0.75;
-    const ry = radiusY * 0.75;
-    const step = Math.max(1, Math.floor(Math.min(rx, ry) / 6));
-    // Gaussian sigma = half the radius for center-weighted sampling
-    const sigmaX = rx * 0.6;
-    const sigmaY = ry * 0.6;
-
-    for (let dy = -Math.floor(ry); dy <= Math.floor(ry); dy += step) {
-      for (let dx = -Math.floor(rx); dx <= Math.floor(rx); dx += step) {
-        if (rx > 0 && ry > 0 && (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry) > 1) continue;
-        const px = Math.round(cx + dx);
-        const py = Math.round(cy + dy);
-        if (px >= 0 && px < imgW && py >= 0 && py < imgH) {
-          // Gaussian weight: more weight to center pixels
-          const weight = Math.exp(-0.5 * ((dx * dx) / (sigmaX * sigmaX) + (dy * dy) / (sigmaY * sigmaY)));
-          weightedFilled += binary[py * imgW + px] * weight;
-          totalWeight += weight;
-        }
-      }
-    }
-    return totalWeight > 0 ? weightedFilled / totalWeight : 0;
-  };
 
   // Grayscale-relative sampling (handles uneven lighting)
   // Returns a "darkness" score: 0 = white/empty, 1 = fully dark/filled.
@@ -1595,10 +1561,10 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     return darkness;
   };
 
-  // ─── DETECT STUDENT ID (Enhanced with statistical adaptive thresholds) ───
+  // ─── DETECT STUDENT ID (Template-based, per-column relative detection) ───
   const detectStudentIdFromImage = (
     grayscale: Uint8Array,
-    binary: Uint8Array,
+    _binary: Uint8Array,
     width: number,
     height: number,
     markers: {
@@ -1608,7 +1574,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       bottomRight: { x: number; y: number };
     },
     layout: TemplateLayout,
-    isCamera: boolean
+    _isCamera: boolean
   ): { studentId: string; doubleShadeColumns: number[] } => {
     const { id } = layout;
     const idDigits: number[] = [];
@@ -1623,79 +1589,63 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     const idBubbleRX = bubbleRX * (3.5 / 3.8);
     const idBubbleRY = bubbleRY * (3.5 / 3.8);
 
-    console.log(`[ID] BubbleR: ${idBubbleRX.toFixed(1)}x${idBubbleRY.toFixed(1)}, mode=${isCamera ? 'camera' : 'upload'}`);
+    // Log first bubble pixel coordinate for verification
+    const firstIdCoord = mapToPixel(markers, id.firstColNX, id.firstRowNY);
+    console.log(`[ID] Frame: ${frameW.toFixed(0)}x${frameH.toFixed(0)}, BubbleR: ${idBubbleRX.toFixed(1)}x${idBubbleRY.toFixed(1)}, ID(0,0) pixel: (${firstIdCoord.px.toFixed(0)}, ${firstIdCoord.py.toFixed(0)})`);
 
-    // Pass 1: Collect ALL fill values across all ID columns to compute statistics
-    const allIdFills: number[][] = [];
-    const allFillValues: number[] = [];
+    // Per-column relative detection: compare 10 digit rows within each column
     for (let col = 0; col < 10; col++) {
-      const colFills: number[] = [];
+      const fills: { digit: number; fill: number }[] = [];
+
       for (let row = 0; row < 10; row++) {
         const nx = id.firstColNX + col * id.colSpacingNX;
         const ny = id.firstRowNY + row * id.rowSpacingNY;
         const { px, py } = mapToPixel(markers, nx, ny);
-        const fill = isCamera
-          ? sampleBubbleGrayscale(grayscale, width, height, px, py, idBubbleRX, idBubbleRY)
-          : sampleBubbleBinary(binary, width, height, px, py, idBubbleRX, idBubbleRY);
-        colFills.push(fill);
-        allFillValues.push(fill);
+        // Always use grayscale sampling — more information than binary
+        const fill = sampleBubbleGrayscale(grayscale, width, height, px, py, idBubbleRX, idBubbleRY);
+        fills.push({ digit: row, fill });
       }
-      allIdFills.push(colFills);
-    }
 
-    // Compute statistics for adaptive threshold
-    allFillValues.sort((a, b) => a - b);
-    const median = allFillValues[Math.floor(allFillValues.length * 0.5)];
-    const q75 = allFillValues[Math.floor(allFillValues.length * 0.75)];
-    const q90 = allFillValues[Math.floor(allFillValues.length * 0.90)];
+      // Sort by darkness (descending) for relative comparison
+      const sorted = [...fills].sort((a, b) => b.fill - a.fill);
+      const best = sorted[0];
+      const restMean = sorted.slice(1).reduce((s, f) => s + f.fill, 0) / 9;
+      const ratio = best.fill / Math.max(0.001, restMean);
 
-    // Adaptive threshold: filled bubbles are statistical outliers
-    // Threshold = midpoint between typical (unfilled) and strong fills
-    const baseThreshold = isCamera ? 0.05 : 0.10;
-    const ID_FILL_THRESHOLD = Math.max(baseThreshold, median + (q90 - median) * 0.25);
-    const ID_DOUBLE_SHADE_RATIO = 0.55;
+      // Detection: best must be clearly darker than the rest of the column
+      const MIN_FILL = 0.03;
+      const MIN_RATIO = 1.8;
 
-    console.log(`[ID] Stats: median=${median.toFixed(3)}, q75=${q75.toFixed(3)}, q90=${q90.toFixed(3)}, adaptiveThreshold=${ID_FILL_THRESHOLD.toFixed(3)}`);
-
-    // Pass 2: Detect digits using adaptive threshold
-    for (let col = 0; col < 10; col++) {
-      const fills = allIdFills[col];
-      let maxFill = 0;
       let detectedDigit = 0;
       let hasDetection = false;
 
-      for (let row = 0; row < 10; row++) {
-        if (fills[row] > maxFill && fills[row] > ID_FILL_THRESHOLD) {
-          maxFill = fills[row];
-          detectedDigit = row;
-          hasDetection = true;
-        }
-      }
+      if (best.fill > MIN_FILL && ratio > MIN_RATIO) {
+        detectedDigit = best.digit;
+        hasDetection = true;
 
-      // Check for double-shade
-      if (maxFill > ID_FILL_THRESHOLD) {
+        // Check for double-shade: multiple bubbles significantly filled
         const filledCount = fills.filter(
-          f => f > ID_FILL_THRESHOLD && f >= maxFill * ID_DOUBLE_SHADE_RATIO
+          f => f.fill > MIN_FILL && f.fill >= best.fill * 0.60
         ).length;
         if (filledCount > 1) {
           doubleShadeColumns.push(col + 1);
-          console.log(`[ID] ⚠️ Col ${col} has DOUBLE SHADE (${filledCount} bubbles filled)`);
+          console.log(`[ID] ⚠️ Col ${col}: DOUBLE-SHADE (${filledCount} bubbles)`);
         }
       }
 
-      console.log(`[ID] Col ${col}: fills=[${fills.map(f => f.toFixed(3)).join(',')}] → ${hasDetection ? detectedDigit : '?'} (max=${maxFill.toFixed(3)})`);
-      idDigits.push(hasDetection ? detectedDigit : 0);
+      console.log(`[ID] Col ${col}: best=${best.digit}(${best.fill.toFixed(3)}) ratio=${ratio.toFixed(2)} restAvg=${restMean.toFixed(3)} → ${hasDetection ? detectedDigit : '?'}`);
+      idDigits.push(detectedDigit);
     }
 
     const raw = idDigits.join('');
-    console.log('[ID] Raw digits:', raw, doubleShadeColumns.length > 0 ? `(double-shade in columns: ${doubleShadeColumns.join(',')})` : '');
+    console.log('[ID] Result:', raw, doubleShadeColumns.length > 0 ? `(double-shade cols: ${doubleShadeColumns.join(',')})` : '');
     return { studentId: raw, doubleShadeColumns };
   };
 
-  // ─── DETECT ANSWERS (Enhanced with statistical adaptive thresholds) ───
+  // ─── DETECT ANSWERS (Template-based, per-row relative detection) ───
   const detectAnswersFromImage = (
     grayscale: Uint8Array,
-    binary: Uint8Array,
+    _binary: Uint8Array,
     width: number,
     height: number,
     markers: {
@@ -1707,7 +1657,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     layout: TemplateLayout,
     numQuestions: number,
     choicesPerQuestion: number,
-    isCamera: boolean
+    _isCamera: boolean
   ): { answers: string[]; multipleAnswers: number[] } => {
     const answers = new Array<string>(numQuestions).fill('');
     const multipleAnswers: number[] = [];
@@ -1718,10 +1668,14 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     const bubbleRX = (layout.bubbleDiameterNX * frameW) / 2;
     const bubbleRY = (layout.bubbleDiameterNY * frameH) / 2;
 
-    // Pass 1: Collect all fill values to compute statistics
-    const allQuestionFills: { q: number; fills: { choice: string; fill: number }[] }[] = [];
-    const allFillValues: number[] = [];
+    // Log first answer bubble coordinate for verification
+    if (layout.answerBlocks.length > 0) {
+      const fb = layout.answerBlocks[0];
+      const fc = mapToPixel(markers, fb.firstBubbleNX, fb.firstBubbleNY);
+      console.log(`[ANS] ${numQuestions}Q, ${choicesPerQuestion} choices, BubbleR: ${bubbleRX.toFixed(1)}x${bubbleRY.toFixed(1)}, Q1-A pixel: (${fc.px.toFixed(0)}, ${fc.py.toFixed(0)})`);
+    }
 
+    // Per-row relative detection: compare all choices within each question row
     for (const block of layout.answerBlocks) {
       for (let q = block.startQ; q <= block.endQ && q <= numQuestions; q++) {
         const rowInBlock = q - block.startQ;
@@ -1731,72 +1685,45 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
           const nx = block.firstBubbleNX + c * block.bubbleSpacingNX;
           const ny = block.firstBubbleNY + rowInBlock * block.rowSpacingNY;
           const { px, py } = mapToPixel(markers, nx, ny);
-
-          const fill = isCamera
-            ? sampleBubbleGrayscale(grayscale, width, height, px, py, bubbleRX, bubbleRY)
-            : sampleBubbleBinary(binary, width, height, px, py, bubbleRX, bubbleRY);
+          // Always use grayscale sampling — more information than binary
+          const fill = sampleBubbleGrayscale(grayscale, width, height, px, py, bubbleRX, bubbleRY);
           fills.push({ choice: choiceLabels[c], fill });
-          allFillValues.push(fill);
         }
-        allQuestionFills.push({ q, fills });
+
+        // Sort by darkness descending for relative comparison
+        const sorted = [...fills].sort((a, b) => b.fill - a.fill);
+        const best = sorted[0];
+        const restMean = sorted.length > 1
+          ? sorted.slice(1).reduce((s, f) => s + f.fill, 0) / (sorted.length - 1)
+          : 0;
+        const ratio = best.fill / Math.max(0.001, restMean);
+
+        // Detection: darkest choice must be clearly above others in the same row
+        const MIN_FILL = 0.03;
+        const MIN_RATIO = 1.8;
+        const qIndex = q - 1;
+
+        if (best.fill > MIN_FILL && ratio > MIN_RATIO) {
+          answers[qIndex] = best.choice;
+
+          // Check for multiple answers: another choice close to the max
+          const filledCount = fills.filter(
+            f => f.fill > MIN_FILL && f.fill >= best.fill * 0.65
+          ).length;
+          if (filledCount > 1) {
+            multipleAnswers.push(q);
+            console.log(`[ANS] Q${q}: MULTI ${fills.map(f => `${f.choice}=${f.fill.toFixed(3)}`).join(' ')}`);
+          }
+        }
+
+        // Log first 5 questions and every 10th for debugging
+        if (q <= 5 || q % 10 === 0) {
+          console.log(`[ANS] Q${q}: ${fills.map(f => `${f.choice}=${f.fill.toFixed(3)}`).join(' ')} → ${answers[qIndex] || '?'} (ratio=${ratio.toFixed(2)})`);
+        }
       }
     }
 
-    // Compute adaptive threshold from statistics
-    allFillValues.sort((a, b) => a - b);
-    const median = allFillValues[Math.floor(allFillValues.length * 0.5)];
-    const q75 = allFillValues[Math.floor(allFillValues.length * 0.75)];
-    const q90 = allFillValues[Math.floor(allFillValues.length * 0.90)];
-
-    // The threshold separates unfilled (noise) from filled bubbles
-    const baseThreshold = isCamera ? 0.04 : 0.08;
-    const FILL_THRESHOLD = Math.max(baseThreshold, median + (q90 - median) * 0.25);
-    const MULTI_ANSWER_RATIO = 0.45;
-
-    console.log(`[ANS] Stats: median=${median.toFixed(3)}, q75=${q75.toFixed(3)}, q90=${q90.toFixed(3)}, adaptiveThreshold=${FILL_THRESHOLD.toFixed(3)}`);
-
-    // Pass 2: Detect answers using adaptive threshold
-    for (const { q, fills } of allQuestionFills) {
-      const qIndex = q - 1;
-
-      let maxFill = 0;
-      let selectedChoice = '';
-
-      for (const { choice, fill } of fills) {
-        if (fill > maxFill && fill > FILL_THRESHOLD) {
-          maxFill = fill;
-          selectedChoice = choice;
-        }
-      }
-
-      // Noise rejection: verify the winner is significantly above the row average
-      if (maxFill > FILL_THRESHOLD && fills.length > 1) {
-        const otherFills = fills.filter(f => f.choice !== selectedChoice).map(f => f.fill);
-        const avgOther = otherFills.reduce((a, b) => a + b, 0) / otherFills.length;
-        const contrast = maxFill / Math.max(0.001, avgOther);
-
-        // Noise rejection: only reject if very low contrast AND weak fill
-        const minContrast = isCamera ? 1.3 : 1.2;
-        if (contrast < minContrast && maxFill < FILL_THRESHOLD * 1.3) {
-          console.log(`[ANS] Q${q}: rejected weak detection ${selectedChoice}=${maxFill.toFixed(3)} (contrast=${contrast.toFixed(2)}, avgOther=${avgOther.toFixed(3)})`);
-          selectedChoice = '';
-          maxFill = 0;
-        }
-      }
-
-      // Check if multiple bubbles are filled for this question
-      if (maxFill > FILL_THRESHOLD) {
-        const filledBubbles = fills.filter(
-          f => f.fill > FILL_THRESHOLD && f.fill >= maxFill * MULTI_ANSWER_RATIO
-        );
-        if (filledBubbles.length > 1) {
-          multipleAnswers.push(q);
-          console.log(`[MULTI] Q${q}: ${filledBubbles.map(f => `${f.choice}=${f.fill.toFixed(3)}`).join(', ')} | all: ${fills.map(f => `${f.choice}=${f.fill.toFixed(3)}`).join(', ')}`);
-        }
-      }
-
-      answers[qIndex] = selectedChoice;
-    }
+    console.log(`[ANS] Detected: ${answers.filter(a => a).length}/${numQuestions}`);
     return { answers, multipleAnswers };
   };
 
